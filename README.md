@@ -1,9 +1,1 @@
-swim
-=====
-
-An OTP application
-
-Build
------
-
-    $ rebar3 compile
+http://barbct5.github.io/swim/
