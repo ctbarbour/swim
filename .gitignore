@@ -1,0 +1,9 @@
+_build/
+ttb_last_config
+log/
+*~
+\#*\#
+.\#*
+*.beam
+TAGS
+erln8.config

@@ -1,0 +1,14 @@
+{application, swim,
+ [{description, "An OTP application"},
+  {vsn, 'git'},
+  {registered, []},
+  {mod, {'swim_app', []}},
+  {applications,
+   [kernel,
+    stdlib,
+    crypto
+   ]},
+  {env,[]},
+  {modules, []},
+  {licenses, ["Apache 2.0"]}
+ ]}.
