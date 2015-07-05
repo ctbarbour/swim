@@ -151,7 +151,6 @@ alive(Member, Mbrs) ->
 %% @doc Suspect a Member
 %%
 %% Suspecting a Member updates the status of the Member and resets it's age.
-%% @equiv update(suspect, Member, Membership)
 %% @end
 -spec suspect(member(), membership()) -> {[membership_event()], membership()}.
 suspect(Member, Mbrs) ->
@@ -171,8 +170,8 @@ leave(Member, Mbrs) ->
 %% of Member's so we can easily age out suspects and mark them as
 %% faulty after a number of protcol periods have passed. We use the
 %% suspicion multiplier provided on initialization of the
-%% Membership. We age out suspects after round(Suspicion *
-%% math:log(NumMembers + 1) protocol periods have elapsed.
+%% Membership. We age out suspects after `round(Suspicion *
+%% math:log(NumMembers + 1)' protocol periods have elapsed.
 %% @end
 -spec age_members(membership()) -> {[membership_event()], membership()}.
 age_members(#mbrs{members=Members, suspicion=Suspicion} = Mbrs) ->

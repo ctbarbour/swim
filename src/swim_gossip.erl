@@ -25,46 +25,40 @@
 %%% to send and receive messages from other peers in the gossip group. We can
 %%% also provide configuration parameters to tune the underlying protocol.
 %%% The parameters we expose are:
-%%% <dl>
-%%%  <dt>`{protocol_period, pos_integer()}'</dt>
-%%%  <dd>The time, in milliseconds, between protocol intervals. This value is
-%%% referred to as <b><code>T'</code></b> in the SWIM papaer. The
-%%% paper notes that the protocol period has to be at least 3 times the
-%%% estimated round-trip time for a message. The protocol period is not
-%%% adjustable after the peer is started.</dd>
-%%%  <dt>`{ack_timeout, pos_integer()}'</dt>
-%%%  <dd>The time, in milliseconds, to wait for
-%%% an ACK in response to a PING. The ACK timeout must be less than the protocol
-%%% period. The ACK timeout should be based on the latency distribution on your
-%%% network. Good choices may be the average round-trip time or the 99th
-%%% percentile.</dd>
-%%%  <dt>`{ack_proxies, pos_integer()}'</dt>
-%%%  <dd>The number of peers to send indirect
-%%% probes via the PING-REQ message. This value is referred to as
-%%% <b><code>k</code></b> in the SWIM paper.</dd>
-%%%  <dt>`{suspicion, pos_integer()}'</dt>
-%%%  <dd>A scaling factor for the number of
-%%% protocol periods we wait for a suspected member to refute our claim. See
-%%% {@link swim_membership} for more information.</dd>
-%%%  <dt>`{retransmit, pos_integer()}'</dt>
-%%%  <dd>A scaling factor for the number of times
-%%% we broadcast membership updates to peers in the gossip group. This value
-%%% is referred to as <b><code>&#x3bb;</code></b> in the SWIM paper.
-%%% See {@link swim_broadcasts} for more information.</dd>
-%%%  <dt>`{seeds, [member()]}'</dt>
-%%%  <dd>A list of members in an existing gossip group.
-%%% When we start the local peer we attempt to join an existing
-%%% group via the provided seeds. To start a new gossip group, we can provide 0
-%%% seed members.</dd>
-%%% </dl>
 %%%
-%%% == SWIM Failure Detector ==
+%%% + `{protocol_period, pos_integer()}` : The time, in milliseconds, between
+%%%   protocol intervals. This value is referred to as __*T*__ in the SWIM paper.
+%%%   The paper notes that the protocol period has to be at least 3 times the
+%%%   estimated round-trip time for a message. The protocol period is not
+%%%   adjustable after the peer is started.
+%%%
+%%% + `{ack_timeout, pos_integer()}` : The time, in milliseconds, to wait for
+%%%   an ACK in response to a PING. The ACK timeout must be less than the protocol
+%%%   period. The ACK timeout should be based on the latency distribution on your
+%%%   network. Good choices may be the average round-trip time or the 99th
+%%%   percentile.
+%%%
+%%% + `{ack_proxies, pos_integer()}` : The number of peers to send indirect
+%%%   probes via the PING-REQ message. This value is referred to as __*k*__
+%%%   in the SWIM paper.
+%%%
+%%% + `{suspicion, pos_integer()}` : A scaling factor for the number of
+%%%   protocol periods we wait for a suspected member to refute our claim.
+%%%
+%%% + `{retransmit, pos_integer()}` : A scaling factor for the number of times
+%%%   we broadcast membership updates to peers in the gossip group. This value
+%%%   is referred to as __*&#x3bb;*__ in the SWIM paper.
+%%%
+%%% + `{seeds, [member()]}` : A list of members in an existing gossip group.
+%%%   When we start the local peer we attempt to join an existing group via the
+%%%   provided seeds. To start a new gossip group, we can provide 0 seed members.
+%%%
 %%% During each protocol period defined by
 %%% `protocol_period', a random member is selected from the local
 %%% peer's membership list and a PING message sent to it. When a peer
 %%% is first started the membership list contains the `seeds'. The
 %%% local peer then waits for a reply ACK from the target of the
-%%% PING. If an ACK is not recieved witin the `ack_timeout' period,
+%%% PING. If an ACK is not received within the `ack_timeout' period,
 %%% the local peer will indirectly probe the target. The local peer
 %%% selects `ack_proxies' members at random, excluding the target of
 %%% the original PING, and sends each a PING-REQ message. Each of

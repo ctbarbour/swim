@@ -43,15 +43,20 @@
 start_link() ->
     gen_event:start_link({local, ?MODULE}).
 
+%% @doc Subscribe a Process to receive messages from the gossip group identified
+%% by `Name' and filtered by `EventCategory'.
 subscribe(Name, EventCategory, Pid) ->
     gen_event:call(?MODULE, {?MODULE, Name}, {subscribe, EventCategory, Pid}).
 
+%% @doc Unsubscribe a Process from receiving further messages from a gossip group.
 unsubscribe(Name, EventCategory, Pid) ->
     gen_event:call(?MODULE, {?MODULE, Name}, {unsubscribe, EventCategory, Pid}).
 
+%% @doc Publishes a membership update event
 membership(Name, Event) ->
     notify(Name, membership, Event).
 
+%% @doc Publishes a User event
 user(Name, Event) ->
     notify(Name, user, Event).
 

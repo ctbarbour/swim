@@ -1,9 +1,14 @@
-@author Tucker Barbour <barbct5@gmail.com>
-@copyright 2015 Tucker Barbour
-@version {@version}
-@title SWIM - An Awesome Weakly-consistent Infection-style Gossip Protocol
-@reference http://www.cs.cornell.edu/~asdas/research/dsn02-SWIM.pdf
-@doc
+
+
+# SWIM - An Awesome Weakly-consistent Infection-style Gossip Protocol #
+
+Copyright (c) 2015 Tucker Barbour
+
+__Version:__ Jul 21 2015 16:46:31
+
+__Authors:__ Tucker Barbour ([`barbct5@gmail.com`](mailto:barbct5@gmail.com)).
+
+__References__* http://www.cs.cornell.edu/~asdas/research/dsn02-SWIM.pdf
 
 ### Intro
 
@@ -15,21 +20,21 @@ participating processes. However, the [*Scalable* part of the title should read:
 *Awesome!*](http://erlangcentral.org/scalable-is-awesome-literally-garrett-smith-erlang-user-conference-2015/#.VZWtcXjEo22)
 So let's be more specific about what Awesome features SWIM provides:
 
-  - Constant message load (bandwidth) per member regardless of the number
-     of members in the group
-  - Constant time to first-detection of a faulty process regardless of
-     the number of members in the group
-  - A deterministic time bound to detect failures
-  - Low false-positive failure detection rate
+- Constant message load (bandwidth) per member regardless of the number
+of members in the group
+- Constant time to first-detection of a faulty process regardless of
+the number of members in the group
+- A deterministic time bound to detect failures
+- Low false-positive failure detection rate
 
 ### Use Cases
 
 What can we use SWIM for?
 
-  - Reliable multicast
-  - Epidemic-style information dissemination
-  - Pub-sub
-  - Generic peer-to-peer systems
+- Reliable multicast
+- Epidemic-style information dissemination
+- Pub-sub
+- Generic peer-to-peer systems
 
 Really anything that requires us to maintain a list of members and detect when
 members join or leave the group, either voluntarily or through failure.
@@ -61,10 +66,10 @@ The biggest "Why Not?" is the weak-consistency guarentees of the protocol.
 If our domain requires consistent membership awareness, then we should look
 elsewhere:
 
-  - [Zookeeper](https://zookeeper.apache.org)
-  - [Paxos](http://research.microsoft.com/en-us/um/people/lamport/pubs/paxos-simple.pdf)
-  - [Raft](https://www.usenix.org/conference/atc14/technical-sessions/presentation/ongaro)
-  - [Riak Ensemble](https://github.com/basho/riak_ensemble)
+- [Zookeeper](https://zookeeper.apache.org)
+- [Paxos](http://research.microsoft.com/en-us/um/people/lamport/pubs/paxos-simple.pdf)
+- [Raft](https://www.usenix.org/conference/atc14/technical-sessions/presentation/ongaro)
+- [Riak Ensemble](https://github.com/basho/riak_ensemble)
 
 What if want more than just membership awareness and fault detection? Say
 we want some sort of application-level sharding like a consistent-hash ring?
@@ -73,8 +78,8 @@ paper. You can use SWIM as the underlying gossip protocol to disseminate
 ring updates to the group -- but that's up to you and your application to do
 everything else. You may be better off taking a look at other, more specific, implementions like:
 
-  - [Ringpop](https://github.com/uber/ringpop)
-  - [Plumtree](https://github.com/helium/plumtree)
+- [Ringpop](https://github.com/uber/ringpop)
+- [Plumtree](https://github.com/helium/plumtree)
 
 What if the information we need to disseminate to the group is large, on
 the order of MiB and GiB? In this implementation of SWIM we strictly use UDP for
@@ -84,7 +89,7 @@ application logic using TCP to transmit our large data between members -- up to
 you. It might also be worth taking a look at alternative implementations that
 have modified the protocol to support both UDP and TCP:
 
-  - [Memberlist](https://github.com/hashicorp/memberlist)
+- [Memberlist](https://github.com/hashicorp/memberlist)
 
 ### Details
 
@@ -93,18 +98,19 @@ documentation which includes details about the implementation. I also highly
 recommended to read the SWIM paper referenced at the top of the documentation.
 The pieces of the SWIM protocol are broken down as follows:
 
-* __*Failure Detection*__ - {@link swim_gossip}
-* __*Membership*__ - {@link swim_membership}
-* __*Dissemination*__ - {@link swim_broadcasts}
+* __*Failure Detection*__ - [`swim_gossip`](swim_gossip.md)
+* __*Membership*__ - [`swim_membership`](swim_membership.md)
+* __*Dissemination*__ - [`swim_broadcasts`](swim_broadcasts.md)
 
 ### How To
 
 Here is a quick reference for using SWIM in your application. These examples
 assume the `swim` and `crypto` applications are already started. We also
-assume encryption keys have already been distributed -- that's outside the
+assume encryption keys have already been distributed -- that`s outside the
 scope of SWIM.
 
-<pre lang="erlang">
+```erlang
+
 % On our first node, let us start the seed listening at 192.168.2.10:5000
 ok = swim:start_gossip(lan, {192,168,2,10}, 5000, [{keys, Keys}]),
 
@@ -115,18 +121,20 @@ ok = swim:start_gossip(lan, {192,168,2,11}, 5000, [{seeds, Seeds}, {keys, Keys}]
 
 % Let us check who else is in the group
 swim:members(lan)
-</pre>
+
+```
 
 ### Build
 
 We require OTP-18.x and an OpenSSL that supports AES-GCM. The default on OSX
-does not include support for AES-GCM, so it's recommended you use `homebrew' to
+does not include support for AES-GCM, so it's recommended you use `homebrew` to
 install a newer version of OpenSSL and compile OTP linking to the OpenSSL managed
-by `homebrew'. Include `--with-ssl=/usr/local/opt/openssl' when compiling OTP.
+by `homebrew`. Include `--with-ssl=/usr/local/opt/openssl` when compiling OTP.
 
-We use `rebar3', included in the source of this repo, to build and test `swim'.
+We use `rebar3`, included in the source of this repo, to build and test `swim`.
 
-<pre>
+```
+
 ./rebar3 as test do xref, dialyzer, eunit
-</pre>
-@end
+
+```

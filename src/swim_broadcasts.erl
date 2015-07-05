@@ -22,28 +22,28 @@
 %%% provided events along with their state as a part of the
 %%% infection-style dissemination component of the SWIM protocol.
 %%%
-%%% == Infection-Style Dissemination ==
+%%% ### Infection-Style Dissemination
 %%% As an alternative to IP Multicast
 %%% or a point-to-point messaging scheme the SWIM protocol
 %%% disseminates membership updates by piggybacking on messages sent
-%%% as a part of the failure detection protcool. The implementation
-%%% does not generate any extra packets.
+%%% as a part of the failure detection protocol. Thus, implementation
+%%% does not generate any extra packets to send membership updates.
 %%%
 %%% Here, `swim_broadcasts' maintains the buffer of recent membership
 %%% updates along with a count for each event. The local count
 %%% specifies the number of times the event has been piggybacked so
 %%% far by this member and is used to choose which events to piggyback
-%%% next. Each event is piggybacked at most <code>Retransmit * log(N +
-%%% 1)</code> times. If the size of events in the buffer is larger
+%%% next. Each event is piggybacked at most `Retransmit * log(N +
+%%% 1)' times. If the size of events in the buffer is larger
 %%% than the maximum number of events that can be piggybacked on a
-%%% single PING or ACK, events that bave been gossiped fewer times are
+%%% single PING or ACK, events that have been gossiped fewer times are
 %%% preferred. See {@link swim_messages:event_size_limit/0} for more
 %%% information on how this limit is derived. This is needed as the
-%%% protocol period is fixed and the rater of membership changes might
+%%% protocol period is fixed and the rate of membership changes might
 %%% temporarily overwhelm the speed of dissemination. Preferring
-%%% "younger" events under such circumstances ensures that tall
+%%% "younger" events under such circumstances ensures that all
 %%% membership changes infect at least a few members - when the
-%%% membership change inject rate quiesces, these changes will
+%%% membership change rate quiesces, older events will
 %%% propagate through the rest of the gossip group.
 %%%
 %%% @end
@@ -82,7 +82,7 @@ push(Event, State) ->
     State#?MODULE{broadcasts=[{Event, 0} | Broadcasts]}.
 
 %% @doc Peek at all Swim Events waiting to be broadcast.
--spec peek(swim_broadcast()) -> [swim_event()].
+-spec peek(State::swim_broadcast()) -> [swim_event()].
 peek(#?MODULE{broadcasts=Broadcasts}) ->
     lists:map(fun({Event, _P}) -> Event end,
 		  lists:sort(fun sort/2, Broadcasts)).
@@ -92,7 +92,7 @@ peek(#?MODULE{broadcasts=Broadcasts}) ->
 %% Events to be broadcast are determined by the number of the peers as well as
 %% the size limitation provided by SizeLimit. Membership events always take
 %% precedence over user events. Events are broadcast up to a max of
-%% <code>Retransmit * log(NumMembers + 1)</code>. If the number of events
+%% `Retransmit * log(NumMembers + 1)'. If the number of events
 %% exceeds the maximum number of events dictated by SizeLimit, events that have
 %% been broadcast fewer times are preferred. This is needed as the rate of
 %% incoming events, i.e. membership changes, might temporarily overwhelm

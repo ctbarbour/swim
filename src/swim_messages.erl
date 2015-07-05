@@ -27,6 +27,9 @@
 %%% {@link encode_leave/1}.
 %%% All SWIM protocol messages are prefixed with a single octet reflecting
 %%% the protocol version of the message. The overall format of SWIM messages is:
+%%% |1|1|N|
+%%% |-|-|-|
+%%% |Version|Tag|Data|
 %%% <table border='1'>
 %%%   <tr>
 %%%     <td>1</td>
@@ -39,13 +42,11 @@
 %%%    <td>Data</td>
 %%%  </tr>
 %%% </table>
-%%% <dl>
-%%%   <dt><strong><code>Version</code></strong></dt>
-%%%   <dd>is the protocol version the message is encoded for</dd>
-%%%   <dt><strong><code>Tag</code></strong></dt>
-%%%   <dd>indicates what type of SWIM message follows. Tag can represent ACK,
-%%% PING, PING-REQ, or LEAVE.</dd>
-%%% </dl>
+%%% - __*Version*__ : is the protocol version the message is encoded for
+%%% - __*Tag*__ : indicates what type of SWIM message Data represents; ACK, PING,
+%%%               PING-REG, or LEAVE
+%%% - __*Data*__ : The SWIM messages payload
+%%% 
 %%% All SWIM messages are encrypted over the wire using AES128-CFB with an HMAC
 %%% for authentication. See {@link encrypt/3} for more information. The
 %%% encryption header is encoded as follows:
