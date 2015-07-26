@@ -11,13 +11,13 @@ SWIM protocol.
 
 Copyright (c) 2015
 
-__Version:__ Jul 21 2015 16:46:31
+__Version:__ Jul 26 2015 10:33:29
 
 <a name="description"></a>
 
 ## Description ##
 
-When starting the gossip process, we require the Ipv4 address and port number
+When starting the gossip process, we require the IPv4 or IPv6 address and port number
 to send and receive messages from other peers in the gossip group. We can
 also provide configuration parameters to tune the underlying protocol.
 The parameters we expose are:

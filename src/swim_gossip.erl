@@ -21,7 +21,7 @@
 %%% @doc This module is responsible for the failure detection mechanism of the
 %%% SWIM protocol.
 %%%
-%%% When starting the gossip process, we require the Ipv4 address and port number
+%%% When starting the gossip process, we require the IPv4 or IPv6 address and port number
 %%% to send and receive messages from other peers in the gossip group. We can
 %%% also provide configuration parameters to tune the underlying protocol.
 %%% The parameters we expose are:

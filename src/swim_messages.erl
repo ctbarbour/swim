@@ -22,14 +22,12 @@
 %%% messages as well as encrypting and decrypting the message payloads.
 %%%
 %%% SWIM protocol message encodings can be found in the documentation
-%%% coorisponding with the various encoding functions defined in this module.
+%%% cooresponding to the various encoding functions defined in this module.
 %%% {@link encode_ack/3}, {@link encode_ping/2}, {@link encode_ping_req/2},
 %%% {@link encode_leave/1}.
 %%% All SWIM protocol messages are prefixed with a single octet reflecting
 %%% the protocol version of the message. The overall format of SWIM messages is:
-%%% |1|1|N|
-%%% |-|-|-|
-%%% |Version|Tag|Data|
+%%%
 %%% <table border='1'>
 %%%   <tr>
 %%%     <td>1</td>
@@ -46,20 +44,20 @@
 %%% - __*Tag*__ : indicates what type of SWIM message Data represents; ACK, PING,
 %%%               PING-REG, or LEAVE
 %%% - __*Data*__ : The SWIM messages payload
-%%% 
-%%% All SWIM messages are encrypted over the wire using AES128-CFB with an HMAC
-%%% for authentication. See {@link encrypt/3} for more information. The
-%%% encryption header is encoded as follows:
+%%%
+%%% All SWIM messages are encrypted over the wire using AES128-GCM. See
+%%% {@link encrypt/3} for more information. The encryption header is encoded as
+%%% follows:
 %%% <table border='1'>
 %%%   <tr>
-%%%     <td>32</td>
+%%%     <td>16</td>
 %%%     <td>16</td>
 %%%     <td>N</td>
 %%%   </tr>
 %%%   <tr>
-%%%     <td>HMAC</td>
 %%%     <td>IV</td>
-%%%     <td>SWIM Message</td>
+%%%     <td>CipherTag</td>
+%%%     <td>CipherText</td>
 %%%   </tr>
 %%% </table>
 %%% @end
@@ -284,21 +282,23 @@ encode_leave(Seq) ->
 encode_envelope(Body) when is_binary(Body) ->
     <<?VERSION_1/integer, Body/binary>>.
 
-%% @doc Encodes a Member as the IPv4 address and port number combination.
+%% @doc Encodes a Member as the IP address and port number combination.
 %%
 %% <table border='1'>
 %%   <tr>
-%%     <td>4</td>
+%%     <td>1</td>
+%%     <td>Size</td>
 %%     <td>2</td>
 %%   </tr>
 %%   <tr>
-%%     <td>IPv4 Address</td>
+%%     <td>Size</td>
+%%     <td>IP Address</td>
 %%     <td>Port Number</td>
 %%   </tr>
 %% </table>
 %% <dl>
-%%   <dt><strong><code>IPv4 Address</code></strong></dt>
-%%   <dd>is the IPv4 Address the Member can be reached</dd>
+%%   <dt><strong><code>IP Address</code></strong></dt>
+%%   <dd>is the IPv4 or IPv6 address the Member can be reached</dd>
 %%   <dt><strong><code>Port Number</code></strong></dt>
 %%   <dd>is the associated Port Number the Member is listening on</dd>
 %% </dl>
@@ -335,12 +335,12 @@ encode_events(Events) ->
 %% </table>
 %% <dl>
 %%   <dt><strong><code>Status</code></strong></dt>
-%%   <dd>is observered status of the Member being broadcast to the group</dd>
+%%   <dd>is observed status of the Member being broadcast to the group</dd>
 %%   <dt><strong><code>Member</code></strong></dt>
 %%   <dd>is the subject of this membership event</dd>
 %%   <dt><strong><code>Incarnation</code></strong></dt>
 %%   <dd>is the incarnation of the subject Member known by the sender of this
-%% event. See {@link swim_membership} for more information on Incarncations.</dd>
+%% event. See {@link swim_membership} for more information on Incarnations.</dd>
 %% </dl>
 %%
 %% A user event is encoded as follows:
