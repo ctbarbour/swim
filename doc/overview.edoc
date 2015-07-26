@@ -5,6 +5,9 @@
 @reference http://www.cs.cornell.edu/~asdas/research/dsn02-SWIM.pdf
 @doc
 
+[![Build Status](https://travis-ci.org/barbct5/swim.svg)](https://travis-ci.org/barbct5/swim)
+
+
 ### Intro
 
 This Application is an Erlang implementation of the
