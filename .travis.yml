@@ -1,0 +1,4 @@
+language: erlang
+otp_release:
+  - 18.0
+script: ./rebar3 do xref, dialyzer, eunit
