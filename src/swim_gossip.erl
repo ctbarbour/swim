@@ -103,6 +103,7 @@
 	  name                            :: atom(),
 	  vault                           :: pid(),
 	  socket                          :: inet:socket(),
+	  listen_ip                       :: inet:ip_address(),
 	  me                              :: member(),
 	  protocol_period                 :: pos_integer(),
 	  ack_proxies                     :: pos_integer(),
@@ -227,6 +228,8 @@ handle_gossip_opt({ack_proxies, Val}, State) when is_integer(Val), Val > 0 ->
     State#state{ack_proxies=Val};
 handle_gossip_opt({retransmit, Val}, State) when is_integer(Val), Val > 0 ->
     State#state{broadcasts=swim_broadcasts:new(Val)};
+handle_gossip_opt({listen_ip, Val}, State) when is_tuple(Val) ->
+    State#state{listen_ip=Val};
 handle_gossip_opt(Opt, _State) ->
     throw({error, {eoptions, Opt}}).
 
@@ -240,8 +243,8 @@ handle_membership_opt(Opt) ->
     throw({error, {eoptions, Opt}}).
 
 -spec create_gossip_state(inet:ip_address(), inet:port_number(), [gossip_opt()]) -> state().
-create_gossip_state(ListenIp, ListenPort, Opts) ->
-    Me = {ListenIp, ListenPort},
+create_gossip_state(AdvertiseIp, ListenPort, Opts) ->
+    Me = {AdvertiseIp, ListenPort},
     apply_default_opts(create_gossip_membership(Me, parse_opts(Opts))).
 
 -spec create_gossip_membership(member(), {[swim_membership:membership_opt()], state()}) -> state().
@@ -258,12 +261,15 @@ apply_default_opts(#state{ack_proxies=undefined} = State) ->
     apply_default_opts(State#state{ack_proxies=3});
 apply_default_opts(#state{broadcasts=undefined} = State) ->
     apply_default_opts(State#state{broadcasts=swim_broadcasts:new(5)});
+apply_default_opts(#state{listen_ip=undefined} = State) ->
+    apply_default_opts(State#state{listen_ip={0,0,0,0}});
 apply_default_opts(State) ->
     State.
 
--spec open_socket(inet:ip_address(), inet:port_number(), list(), state()) -> state().
-open_socket(_ListenIp, ListenPort, Opts, State) ->
-    SocketOpts = [{ip, {0,0,0,0}} | Opts],
+-spec open_socket(inet:port_number(), list(), state()) -> state().
+open_socket(ListenPort, Opts, State) ->
+    #state{listen_ip=ListenIp} = State,
+    SocketOpts = [{ip, ListenIp} | Opts],
     {ok, Socket} = gen_udp:open(ListenPort, SocketOpts),
     State#state{socket=Socket}.
 
@@ -271,11 +277,11 @@ socket_opts() ->
     [binary, {active, once}].
 
 %% @private
-init([Name, ListenIp, ListenPort, Opts]) ->
+init([Name, AdvertiseIp, ListenPort, Opts]) ->
     _Ran = random:seed(erlang:monotonic_time()),
     {Keys, GossipOpts} = fetch_keys(Opts),
-    State = open_socket(ListenIp, ListenPort, socket_opts(),
-			create_gossip_state(ListenIp, ListenPort, GossipOpts)),
+    State = open_socket(ListenPort, socket_opts(),
+			create_gossip_state(AdvertiseIp, ListenPort, GossipOpts)),
     {ok, Vault} = swim_vault:start_link(Keys),
     self() ! protocol_period,
     {ok, State#state{vault=Vault, name=Name}}.
