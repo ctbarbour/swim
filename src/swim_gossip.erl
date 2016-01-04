@@ -262,8 +262,8 @@ apply_default_opts(State) ->
     State.
 
 -spec open_socket(inet:ip_address(), inet:port_number(), list(), state()) -> state().
-open_socket(ListenIp, ListenPort, Opts, State) ->
-    SocketOpts = [{ip, ListenIp} | Opts],
+open_socket(_ListenIp, ListenPort, Opts, State) ->
+    SocketOpts = [{ip, {0,0,0,0}} | Opts],
     {ok, Socket} = gen_udp:open(ListenPort, SocketOpts),
     State#state{socket=Socket}.
 
