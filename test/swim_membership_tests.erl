@@ -123,8 +123,13 @@ postcondition(S, {call, _, update, [Member, NewStatus, NewInc]}, Events) ->
 		    true
 	    end;
 	false ->
-	    Event = {membership, {NewStatus, Member, NewInc}},
-	    lists:member(Event, Events)
+	    case NewStatus of
+		alive ->
+		    Event = {membership, {NewStatus, Member, NewInc}},
+		    lists:member(Event, Events);
+		_ ->
+		    true
+	    end
     end;
 postcondition(_State, {call, _, age_members, _}, _Events) ->
     true.
@@ -155,7 +160,7 @@ next_state(S, _V, {call, _, update, [Member, NewStatus, NewInc]}) ->
 			Members
 		end,
 	    S#state{members=NewMembers};
-	false when NewStatus /= faulty ->
+	false when NewStatus =:= alive ->
 	    S#state{members=[{Member, NewStatus, NewInc, 0} | Members]};
 	false  ->
 	    S

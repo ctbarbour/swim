@@ -148,7 +148,14 @@ alive(Member, Mbrs) ->
 %% @end
 -spec suspect(member(), membership()) -> {[membership_event()], membership()}.
 suspect(Member, Mbrs) ->
-    update(Member, suspect, Mbrs).
+    #mbrs{members=Members} = Mbrs,
+    case maps:find(Member, Members) of
+	{ok, Info} ->
+	    #minfo{inc=Incarnation} = Info,
+	    maybe_update({suspect, Incarnation}, Info, Member, Mbrs);
+	error ->
+	    {[], Mbrs}
+    end.
 
 %% @doc Update Membership to indicate the Member has willingly left.
 -spec leave(member(), membership()) -> {[membership_event()], membership()}.
