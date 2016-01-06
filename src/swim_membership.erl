@@ -44,8 +44,7 @@
          leave/2,
          update/3,
          update/4,
-         age_members/1,
-	 faulty_members/1
+         age_members/1
         ]).
 
 -include("swim.hrl").
@@ -54,8 +53,7 @@
 	  me                            :: member(),
 	  incarnation = 0               :: non_neg_integer(),
 	  members     = maps:new()      :: members(),
-	  suspicion   = 5               :: age(),
-	  faulty      = []              :: list({member(), incarnation()})
+	  suspicion   = 5               :: age()
 	 }).
 
 -record(minfo, {
@@ -105,10 +103,6 @@ members(#mbrs{members=Members}) ->
 	   (Member, Info, Map) ->
 		maps:put(Member, Info, Map)
 	end, maps:new(), Members)).
-
--spec faulty_members(membership()) -> list(member()).
-faulty_members(#mbrs{faulty=Faulty}) ->
-    lists:map(fun({Member, _Inc}) -> Member end, Faulty).
 
 %% @doc Returns the list of Members with their current status
 -spec members_with_status(membership()) -> [{member(), member_status()}].
@@ -165,7 +159,7 @@ leave(Member, Mbrs) ->
 %% gossip protocol should age it's Members on each protocol period to
 %% age out suspects.
 %%
-%% We keep track Member's age as a useful piece of information to
+%% We track Member's age as a useful piece of information to
 %% track the churn of Membership. It's also important to track the age
 %% of Member's so we can easily age out suspects and mark them as
 %% faulty after a number of protcol periods have passed. We use the
@@ -176,30 +170,34 @@ leave(Member, Mbrs) ->
 -spec age_members(membership()) -> {[membership_event()], membership()}.
 age_members(#mbrs{members=Members, suspicion=Suspicion} = Mbrs) ->
     MaxAge = round(Suspicion * math:log(maps:size(Members) + 1)),
-    {Events, NewMembers} = remove_old_suspects(MaxAge,
-					       increment_member_age(Members)),
-    {Events, Mbrs#mbrs{members=NewMembers}}.
+    AgedMembership = increment_member_age(Mbrs),
+    remove_old_suspects(MaxAge, AgedMembership).
 
--spec increment_member_age(members()) -> members().
-increment_member_age(Members) ->
-    maps:map(fun age_member/2, Members).
+-spec increment_member_age(membership()) -> membership().
+increment_member_age(Membership) ->
+    #mbrs{members=Members} = Membership,
+    NewMembers = maps:map(fun age_member/2, Members),
+    Membership#mbrs{members=NewMembers}.
 
 -spec age_member(member(), minfo()) -> minfo().
 age_member(_Member, #minfo{age=Age} = Info) ->
     Info#minfo{age=Age + 1}.
 
--spec remove_old_suspects(age(), members()) -> {[membership_event()], members()}.
-remove_old_suspects(MaxAge, Members) ->
-    maps:fold(fun(Member, Info, {Events, NewMembers}) ->
-		      #minfo{status=Status, age=Age, inc=Inc} = Info,
-		      case {Status, Age} of
-			  {suspect, Age} when Age > MaxAge ->
-			      Event = new_membership_event(faulty, Member, Inc),
-			      {[Event | Events], NewMembers};
-			  _ ->
-			      {Events, maps:put(Member, Info, NewMembers)}
-		      end
-	      end, {[], maps:new()}, Members).
+-spec remove_old_suspects(age(), membership())
+			 -> {[membership_event()], membership()}.
+remove_old_suspects(MaxAge, Membership) ->
+    #mbrs{members=Members} = Membership,
+    {Es, Ms} = maps:fold(fun(Member, Info, {Events, NewMembers}) ->
+			   #minfo{status=Status, age=Age, inc=Inc} = Info,
+			   case {Status, Age} of
+			       {suspect, Age} when Age > MaxAge ->
+				   Event = new_membership_event(faulty, Member, Inc),
+				   {[Event | Events], NewMembers};
+			       _ ->
+				   {Events, maps:put(Member, Info, NewMembers)}
+			   end
+		   end, {[], maps:new()}, Members),
+    {Es, Membership#mbrs{members=Ms}}.
 
 %% @doc Update a Member's status using the currently known
 %% incarnation.
@@ -222,11 +220,13 @@ update(Member, Status, Mbrs) ->
 -spec update(member(), member_status(), incarnation(), membership())
 	    -> {[membership_event()], membership()}.
 update(Member, Status, Incarnation, #mbrs{members=Members} = Mbrs) ->
-    case maps:find(Member, Members) of
-	{ok, Info} ->
-	    maybe_update({Status, Incarnation}, Info, Member, Mbrs);
-	error ->
-	    apply_update(Member, #minfo{status=Status, inc=Incarnation}, Mbrs)
+    case {maps:find(Member, Members), Status} of
+	{error, alive} ->
+	    apply_update(Member, #minfo{status=Status, inc=Incarnation}, Mbrs);
+	{error, _Status} ->
+	    {[], Mbrs};
+	{{ok, Info}, _Status} ->
+	    maybe_update({Status, Incarnation}, Info, Member, Mbrs)
     end.
 
 -spec maybe_update({member_status(), incarnation()}, minfo(), member(), membership()) ->
@@ -266,11 +266,10 @@ new_incarnation(I, J) when I < J ->
 
 -spec apply_update(member(), minfo(), membership()) -> {[membership_event()], membership()}.
 apply_update(Member, #minfo{status=faulty, inc=Inc}, Mbrs) ->
-    #mbrs{members=Members, faulty=Faulty} = Mbrs,
+    #mbrs{members=Members} = Mbrs,
     NewMembers = maps:remove(Member, Members),
-    NewFaulty = [{Member, Inc} | Faulty],
     Change = new_membership_event(faulty, Member, Inc),
-    {[Change], Mbrs#mbrs{members=NewMembers, faulty=NewFaulty}};
+    {[Change], Mbrs#mbrs{members=NewMembers}};
 apply_update(Member, #minfo{status=Status, inc=Inc} = Info, #mbrs{members=Members} = Mbrs) ->
     NewMembers = maps:put(Member, Info, Members),
     Change = new_membership_event(Status, Member, Inc),

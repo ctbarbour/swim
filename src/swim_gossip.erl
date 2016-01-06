@@ -122,7 +122,7 @@
 	  tref              :: reference(),
 	  terminal          :: member(),
 	  origin            :: member(),
-	  sent              :: erlang:monotonic_time()
+	  sent              :: erlang:timestamp()
 	 }).
 
 -type ping()              :: #ping{}.
@@ -130,7 +130,8 @@
 -type gossip_opt()        :: {protocol_period, pos_integer()} |
 			     {ack_timeout, pos_integer()} |
 			     {ack_proxies, pos_integer()} |
-			     {retransmit, pos_integer()}.
+			     {retransmit, pos_integer()} |
+			     {listen_ip, inet:ip_address()}.
 -type swim_opt()          :: gossip_opt()
 			   | {keys, list(key())}
 			   | swim_membership:membership_opt().
@@ -220,6 +221,8 @@ fetch_keys(Opts) ->
     end.
 
 -spec handle_gossip_opt(gossip_opt(), state()) -> state() | no_return().
+handle_gossip_opt({listen_ip, Val}, State) ->
+    State#state{listen_ip=Val};
 handle_gossip_opt({protocol_period, Val}, State) when is_integer(Val), Val > 0 ->
     State#state{protocol_period=Val};
 handle_gossip_opt({ack_timeout, Val}, State) when is_integer(Val), Val > 0 ->
@@ -228,8 +231,6 @@ handle_gossip_opt({ack_proxies, Val}, State) when is_integer(Val), Val > 0 ->
     State#state{ack_proxies=Val};
 handle_gossip_opt({retransmit, Val}, State) when is_integer(Val), Val > 0 ->
     State#state{broadcasts=swim_broadcasts:new(Val)};
-handle_gossip_opt({listen_ip, Val}, State) when is_tuple(Val) ->
-    State#state{listen_ip=Val};
 handle_gossip_opt(Opt, _State) ->
     throw({error, {eoptions, Opt}}).
 
@@ -516,7 +517,7 @@ send_ping({Ip, Port} = To, From, Seq, State) ->
     Ref = make_ref(),
     TRef = create_ack_timer(Ref, State),
     Ping = #ping{sequence=Seq, origin=From, terminal=To, ref=Ref,
-		 tref=TRef, sent=erlang:monotonic_time()},
+		 tref=TRef, sent=erlang:timestamp()},
     {ok, Ping, NewState}.
 
 -spec send_ack(member(), sequence(), member(), state()) -> {ok, state()}.
