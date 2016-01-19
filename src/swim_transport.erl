@@ -12,6 +12,7 @@
 	 }).
 
 start_link(ListenIp, ListenPort, Keys) ->
+
     gen_server:start_link(?MODULE,
 			  [self(), ListenIp, ListenPort, Keys], []).
 
@@ -27,6 +28,7 @@ send(Pid, DestIp, DestPort, Data) ->
 init([Parent, ListenIp, ListenPort, Keys]) ->
     {ok, Vault} = swim_vault:start_link(Keys),
     SocketOpts = [binary, {ip, ListenIp}, {active, once}],
+    ok = error_logger:info_msg("ListenIp: ~p ListPort: ~p", [ListenIp, ListenPort]),
     {ok, Socket} = gen_udp:open(ListenPort, SocketOpts),
     {ok, #state{parent=Parent, vault=Vault, socket=Socket}}.
 
@@ -75,7 +77,7 @@ handle_udp(Data, From, State) ->
 		    ok = error_logger:warning_msg("Failed to decode message: ~p", [Reason]),
 		    State;
 		DecodedMessage ->
-		    Parent ! DecodedMessage,
+		    Parent ! {DecodedMessage, From},
 		    State
 	    end;
 	{error, failed_verification} ->

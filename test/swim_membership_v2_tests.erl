@@ -57,19 +57,20 @@ g_existing_member(State) ->
     oneof([g_local_member(State), g_non_local_member(State)]).
 
 g_member(State) ->
-    oneof([g_new_member()] ++
-	      [g_existing_member(State) || State#state.members /= []]).
+    frequency([{1, g_new_member()}] ++
+	      [{3, g_existing_member(State)} || State#state.members /= []]).
 
 initial_state() ->
     #state{me=?ME}.
 
 command(State) ->
-    oneof([{call, ?SUT, alive, [{var, sut}, g_member(State), g_incarnation()]},
-	   {call, ?SUT, suspect, [{var, sut}, g_member(State), g_incarnation()]},
-	   {call, ?SUT, faulty, [{var, sut}, g_member(State), g_incarnation()]},
-	   {call, ?SUT, members, [{var, sut}]},
-	   {call, ?SUT, events, [{var, sut}, integer()]}
-	  ]).
+    frequency([
+	       {1, {call, ?SUT, alive, [{var, sut}, g_member(State), g_incarnation()]}},
+	       {1, {call, ?SUT, suspect, [{var, sut}, g_member(State), g_incarnation()]}},
+	       {1, {call, ?SUT, faulty, [{var, sut}, g_member(State), g_incarnation()]}},
+	       {2, {call, ?SUT, members, [{var, sut}]}},
+	       {2, {call, ?SUT, events, [{var, sut}, integer()]}}
+	      ]).
 
 precondition(_State, _Call) ->
     true.
@@ -82,7 +83,7 @@ postcondition(S, {call, _Mod, events, _Args}, Events) ->
     #state{events=KnownEvents, me=Me,
 	   incarnation=LocalIncarnation} = S,
     lists:all(
-      fun({Status, Member, Incarnation} = Event) ->
+      fun({Status, Member, Incarnation}) ->
 	      case lists:keyfind(Member, 2, KnownEvents) of
 		  {Status, Member, Incarnation, _T} ->
 		      true;
@@ -90,8 +91,7 @@ postcondition(S, {call, _Mod, events, _Args}, Events) ->
 		      case {Member, LocalIncarnation} of
 			  {Me, Incarnation} ->
 			      true;
-			  Other ->
-			      ?debugFmt("~nMe: ~p~nOther: ~p~n", [{Member, LocalIncarnation}, Other]),
+			  _Other ->
 			      false
 		      end;
 		  _Other ->
@@ -110,7 +110,8 @@ next_state(S, _V, {call, _Mod, alive, [_Pid, Member, Incarnation]}) ->
 	true ->
 	    case Incarnation >= LocalIncarnation of
 		true ->
-		    S#state{events=[{alive, Member, Incarnation + 1, 0} | Events], incarnation=Incarnation + 1};
+		    S#state{events=[{alive, Member, Incarnation + 1, 0} | Events],
+			    incarnation=Incarnation + 1};
 		false ->
 		    S#state{events=[{alive, Member, LocalIncarnation, 0} | Events]}
 	    end;
@@ -134,7 +135,7 @@ next_state(#state{me=Me} = S, _V, {call, _Mod, suspect, [_Pid, Me, Incarnation]}
     case Incarnation >= LocalIncarnation of
 	true ->
 	    S#state{events=[{alive, Me, Incarnation + 1, 0} | Events],
-		    incarnation = Incarnation + 1};
+		    incarnation=Incarnation + 1};
 	false ->
 	    S#state{events=[{alive, Me, LocalIncarnation, 0} | Events]}
     end;

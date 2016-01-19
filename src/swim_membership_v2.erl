@@ -36,9 +36,15 @@
 			  {seeds, [member()]}.
 
 -export([start_link/2, alive/3, suspect/3, faulty/3, members/1,
-	 events/2]).
+	 events/1, events/2, local_member/1, member/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
+
+local_member(Pid) ->
+    gen_server:call(Pid, local).
+
+events(Pid) ->
+    events(Pid, swim_messages:event_size_limit()).
 
 events(Pid, MaxSize) ->
     gen_server:call(Pid, {events, MaxSize}).
@@ -54,6 +60,9 @@ suspect(Pid, Member, Incarnation) ->
 -spec faulty(pid(), member(), non_neg_integer()) -> list().
 faulty(Pid, Member, Incarnation) ->
     gen_server:call(Pid, {faulty, Member, Incarnation}).
+
+member(Pid, Member) ->
+    gen_server:call(Pid, {member, Member}).
 
 -spec members(pid()) -> [member()].
 members(Pid) ->
@@ -88,6 +97,8 @@ init([Me, Opts]) ->
     State = handle_opts(Opts, #state{me=Me}),
     {ok, State}.
 
+handle_call(local, _From, State) ->
+    {reply, State#state.me, State};
 handle_call({events, MaxSize}, _From, State) ->
     #state{retransmit_factor=RetransmitFactor,
 	   membership_events=Events,
@@ -98,6 +109,14 @@ handle_call({events, MaxSize}, _From, State) ->
 			 size_remaining=MaxSize},
     {Broadcasts, Remaining} = dequeue(Progress, Events),
     {reply, Broadcasts, State#state{membership_events=Remaining}};
+handle_call({member, Member}, _From, State) ->
+    #state{members=Members} = State,
+    case maps:find(Member, Members) of
+	{ok, #member_state{incarnation=Incarnation, status=Status}} ->
+	    {reply, {ok, {Member, Status, Incarnation}}, State};
+	error ->
+	    {reply, {error, not_found}, State}
+    end;
 handle_call(members, _From, State) ->
     #state{members=Members} = State,
     M = maps:fold(
@@ -108,7 +127,7 @@ handle_call(members, _From, State) ->
     {reply, M, State};
 handle_call({alive, Member, Incarnation}, _From, #state{me=Member} = State) ->
     #state{incarnation=CurrentIncarnation} = State,
-    case Incarnation < CurrentIncarnation of
+    case Incarnation =< CurrentIncarnation of
 	true ->
 	    {reply, ok, State};
 	false ->
@@ -255,11 +274,11 @@ dequeue(Progress, [NextBroadcast | Rest] = L, Remaining) ->
 	    case Transmissions + 1 of
 		T when T >= MaxTransmissions ->
 		    dequeue(Progress#progress{size_remaining=NewSize,
-					      broadcasts=[Msg | Broadcasts]},
+					      broadcasts=[{membership, Msg} | Broadcasts]},
 			    Rest, Remaining);
 		T ->
 		    dequeue(Progress#progress{size_remaining=NewSize,
-					      broadcasts=[Msg | Broadcasts]},
+					      broadcasts=[{membership, Msg} | Broadcasts]},
 			    Rest, [{Member, T, Msg} | Remaining])
 	    end;
 	NewSize when NewSize =< 0 ->
