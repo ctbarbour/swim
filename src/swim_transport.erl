@@ -1,8 +1,7 @@
 -module(swim_transport).
 -behavior(gen_server).
 
--export([start_link/3, send/4, close/1, controlling_process/2,
-	 rotate_keys/2]).
+-export([start_link/3, send/4, close/1, rotate_keys/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
 
@@ -20,9 +19,6 @@ start_link(ListenIp, ListenPort, Keys) ->
 close(Pid) ->
     gen_server:call(Pid, close).
 
-controlling_process(Pid, Controller) ->
-    gen_server:call(Pid, {controlling_process, self(), Controller}).
-
 rotate_keys(Pid, Key) ->
     gen_server:cast(Pid, {rotate_keys, Key}).
 
@@ -38,11 +34,6 @@ handle_call(close, _From, State) ->
     #state{socket=Socket} = State,
     ok = gen_udp:close(Socket),
     {stop, normal, ok, State#state{socket=undefined}};
-handle_call({controlling_process, Caller, Controller}, _From, #state{parent=Caller} = State) ->
-    {reply, ok, State#state{parent=Controller}};
-handle_call({controlling_process, Caller, _Controller}, _From, State) ->
-    #state{parent=Parent} = State,
-    {reply, {error, {Caller, Parent}}};
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
