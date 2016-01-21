@@ -19,18 +19,18 @@
 -module(swim_sup).
 -behaviour(supervisor).
 
--export([start_link/0, start_gossip/4, stop_gossip/1]).
+-export([start_link/0, start_gossip/3, stop_gossip/1]).
 -export([init/1]).
 
 -spec start_link() -> {ok, pid()}.
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
--spec start_gossip(atom(), inet:ip_address(), inet:port_number(), list())
+-spec start_gossip(atom(), {inet:ip_address(), inet:port_number()}, list())
 		  -> {ok, pid()} | {error, term()}.
-start_gossip(Name, ListenIp, ListenPort, Opts) ->
+start_gossip(Name, LocalMember, Opts) ->
     Spec = {{swim_gossip_sup, Name},
-	    {swim_gossip_sup, start_link, [Name, ListenIp, ListenPort, Opts]},
+	    {swim_gossip_sup, start_link, [Name, LocalMember, Opts]},
 	    transient, 5000, supervisor, [swim_gossip_sup]},
     supervisor:start_child(?MODULE, Spec).
 
@@ -42,6 +42,4 @@ stop_gossip(Name) ->
     ok.
 
 init([]) ->
-    Events = {swim_gossip_events, {swim_gossip_events, start_link, []},
-	      permanent, 5000, worker, [swim_gossip_events]},
-    {ok, {{one_for_one, 10, 3600}, [Events]} }.
+    {ok, {{one_for_one, 10, 3600}, []} }.

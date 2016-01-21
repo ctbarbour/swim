@@ -1,18 +1,19 @@
 -module(swim_transport).
 -behavior(gen_server).
 
--export([start_link/3, send/4, close/1, controlling_process/2]).
+-export([start_link/3, send/4, close/1, controlling_process/2,
+	 rotate_keys/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
 
 -record(state, {
 	  parent :: pid(),
 	  socket :: inet:socket(),
-	  vault  :: pid()
+	  keys = [] :: [binary()],
+	  aad :: binary()
 	 }).
 
 start_link(ListenIp, ListenPort, Keys) ->
-
     gen_server:start_link(?MODULE,
 			  [self(), ListenIp, ListenPort, Keys], []).
 
@@ -22,15 +23,16 @@ close(Pid) ->
 controlling_process(Pid, Controller) ->
     gen_server:call(Pid, {controlling_process, self(), Controller}).
 
+rotate_keys(Pid, Key) ->
+    gen_server:cast(Pid, {rotate_keys, Key}).
+
 send(Pid, DestIp, DestPort, Data) ->
     gen_server:cast(Pid, {send, DestIp, DestPort, Data}).
 
 init([Parent, ListenIp, ListenPort, Keys]) ->
-    {ok, Vault} = swim_vault:start_link(Keys),
     SocketOpts = [binary, {ip, ListenIp}, {active, once}],
-    ok = error_logger:info_msg("ListenIp: ~p ListPort: ~p", [ListenIp, ListenPort]),
     {ok, Socket} = gen_udp:open(ListenPort, SocketOpts),
-    {ok, #state{parent=Parent, vault=Vault, socket=Socket}}.
+    {ok, #state{parent=Parent, keys=Keys, socket=Socket, aad=aad()}}.
 
 handle_call(close, _From, State) ->
     #state{socket=Socket} = State,
@@ -44,9 +46,12 @@ handle_call({controlling_process, Caller, _Controller}, _From, State) ->
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
+handle_cast({rotate_keys, Key}, State) ->
+    #state{keys=Keys} = State,
+    {noreply, State#state{keys=[Key | Keys]}};
 handle_cast({send, DestIp, DestPort, Msg}, State) ->
-    #state{socket=Socket, vault=Vault} = State,
-    Encrypted = swim_vault:encrypt(Vault, Msg),
+    #state{socket=Socket} = State,
+    Encrypted = encrypt(Msg, State),
     ok = gen_udp:send(Socket, DestIp, DestPort, Encrypted),
     {noreply, State};
 handle_cast(_Msg, State) ->
@@ -69,18 +74,33 @@ terminate(_Reason, #state{socket=Socket}) ->
     ok.
 
 handle_udp(Data, From, State) ->
-    #state{vault=Vault, parent=Parent} = State,
-    case swim_vault:decrypt(Vault, Data) of
+    #state{parent=Parent, keys=Keys, aad=AAD} = State,
+    case decrypt(Data, AAD, Keys) of
 	{ok, SwimMessage} ->
 	    case catch(swim_messages:decode(SwimMessage)) of
-		{'EXIT', Reason} ->
-		    ok = error_logger:warning_msg("Failed to decode message: ~p", [Reason]),
+		{'EXIT', _Reason} ->
 		    State;
 		DecodedMessage ->
 		    Parent ! {DecodedMessage, From},
 		    State
 	    end;
 	{error, failed_verification} ->
-	    ok = error_logger:warning_msg("Message failed verfication from ~p", [From]),
 	    State
     end.
+
+encrypt(Msg, State) ->
+    #state{keys=[Key|_], aad=AAD} = State,
+    swim_messages:encrypt(Key, AAD, Msg).
+
+decrypt(_Data, _AAD, []) ->
+    {error, failed_verification};
+decrypt(Data, AAD, [Key | Keys]) ->
+    case swim_messages:decrypt(Key, AAD, Data) of
+	{error, failed_verification} ->
+	    decrypt(Data, AAD, Keys);
+	SwimMessage ->
+	    {ok, SwimMessage}
+    end.
+
+aad() ->
+    crypto:hash(sha256, term_to_binary(erlang:get_cookie())).

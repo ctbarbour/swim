@@ -20,7 +20,7 @@
 %%% @doc This is the main swim module.
 -module(swim).
 
--export([start_gossip/4,
+-export([start_gossip/3,
          stop_gossip/1,
          publish/2,
          subscribe/2,
@@ -34,11 +34,11 @@
 	      membership_event/0, swim_event/0, event_category/0]).
 
 %% @doc Starts a gossip peer.
--spec start_gossip(atom(), inet:ip_address(),
-		   inet:port_number(), [swim_gossip:gossip_opt()])
+-spec start_gossip(atom(), {inet:ip_address(),
+		   inet:port_number()}, [swim_gossip:gossip_opt()])
 		  -> {ok, pid()}.
-start_gossip(Name, ListenIp, ListenPort, Opts) ->
-    swim_sup:start_gossip(Name, ListenIp, ListenPort, Opts).
+start_gossip(Name, LocalMember, Opts) ->
+    swim_sup:start_gossip(Name, LocalMember, Opts).
 
 %% @doc Stops a running gossip peer.
 -spec stop_gossip(atom()) -> ok.
@@ -48,7 +48,7 @@ stop_gossip(Name) ->
 %% @doc Returns the known members for a given gossip peer.
 -spec members(atom()) -> [member()].
 members(Name) ->
-    swim_gossip:members(Name).
+    swim_gossip_v2:members(Name).
 
 %% @doc Publishes a term to the rest of the gossip peers.
 -spec publish(atom(), term()) -> ok.

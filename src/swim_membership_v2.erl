@@ -36,7 +36,7 @@
 			  {seeds, [member()]}.
 
 -export([start_link/2, alive/3, suspect/3, faulty/3, members/1,
-	 events/1, events/2, local_member/1, member/2]).
+	 events/1, events/2, local_member/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
 
@@ -60,9 +60,6 @@ suspect(Pid, Member, Incarnation) ->
 -spec faulty(pid(), member(), non_neg_integer()) -> list().
 faulty(Pid, Member, Incarnation) ->
     gen_server:call(Pid, {faulty, Member, Incarnation}).
-
-member(Pid, Member) ->
-    gen_server:call(Pid, {member, Member}).
 
 -spec members(pid()) -> [member()].
 members(Pid) ->
@@ -109,14 +106,6 @@ handle_call({events, MaxSize}, _From, State) ->
 			 size_remaining=MaxSize},
     {Broadcasts, Remaining} = dequeue(Progress, Events),
     {reply, Broadcasts, State#state{membership_events=Remaining}};
-handle_call({member, Member}, _From, State) ->
-    #state{members=Members} = State,
-    case maps:find(Member, Members) of
-	{ok, #member_state{incarnation=Incarnation, status=Status}} ->
-	    {reply, {ok, {Member, Status, Incarnation}}, State};
-	error ->
-	    {reply, {error, not_found}, State}
-    end;
 handle_call(members, _From, State) ->
     #state{members=Members} = State,
     M = maps:fold(
@@ -269,7 +258,7 @@ dequeue(Progress, [NextBroadcast | Rest] = L, Remaining) ->
     #progress{size_remaining=SizeRemaining, broadcasts=Broadcasts,
 	      max_transmissions=MaxTransmissions} = Progress,
     {Member, Transmissions, Msg} = NextBroadcast,
-    case SizeRemaining - 15 of
+    case SizeRemaining - 12 of
 	NewSize when NewSize > 0 ->
 	    case Transmissions + 1 of
 		T when T >= MaxTransmissions ->

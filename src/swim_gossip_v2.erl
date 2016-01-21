@@ -4,7 +4,7 @@
 
 -include("swim.hrl").
 
--export([start_link/3]).
+-export([start_link/3, members/1, local_member/1, stop/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
 
@@ -33,21 +33,39 @@
 
 -type ping() :: #ping{}.
 
-start_link(Membership, TransportOpts, Opts) ->
-    gen_server:start_link(?MODULE, [Membership, TransportOpts, Opts], []).
+start_link(Name, LocalMember, Opts) ->
+    gen_server:start_link({local, Name}, ?MODULE, [LocalMember, Opts], []).
 
-start_transport(Opts) ->
-    Ip = proplists:get_value(ip, Opts),
-    Port = proplists:get_value(port, Opts),
+local_member(Name) ->
+    gen_server:call(Name, local_member).
+
+members(Name) ->
+    gen_server:call(Name, members).
+
+stop(Name) ->
+    gen_server:call(Name, stop).
+
+start_transport({Ip, Port}, Opts) ->
     Keys = proplists:get_value(keys, Opts, []),
     swim_transport:start_link(Ip, Port, Keys).
 
-init([Membership, TransportOpts, Opts]) ->
-    State = handle_opts(Opts, #state{membership=Membership}),
-    {ok, Transport} = start_transport(TransportOpts),
+init([LocalMember, Opts]) ->
+    State = init_state([{local_member, LocalMember} | Opts]),
+    {ok, Membership} = swim_membership_v2:start_link(LocalMember, Opts),
+    {ok, Transport} = start_transport(LocalMember, Opts),
     self() ! protocol_period,
-    {ok, State#state{transport=Transport}}.
+    {ok, State#state{transport=Transport, membership=Membership}}.
 
+handle_call(local_member, _From, State) ->
+    #state{local_member=LocalMember} = State,
+    {reply, LocalMember, State};
+handle_call(stop, _From, State) ->
+    #state{transport=Transport} = State,
+    ok = swim_transport:close(Transport),
+    {stop, normal, ok, State};
+handle_call(members, _From, State) ->
+    #state{membership=Membership} = State,
+    {reply, swim_membership_v2:members(Membership), State};
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
@@ -61,7 +79,7 @@ handle_info(protocol_period, State) ->
 handle_info({ack_timeout, Ref}, State) ->
     NewState = handle_ack_timeout(Ref, State),
     {noreply, NewState};
-handle_info({{ack, Sequence, Responder, Events}, From}, State) ->
+handle_info({{ack, Sequence, Responder, Events}, _From}, State) ->
     #state{current_ping=CurrentPing} = State,
     NewState = handle_ack(Sequence, Responder, CurrentPing, State),
     _ = handle_events(Events, State),
@@ -82,19 +100,24 @@ code_change(_OldVsn, State, _Extra) ->
 terminate(_Reason, _State) ->
     ok.
 
-handle_opts([], State) ->
+init_state(Opts) ->
+    init_state(Opts, #state{}).
+
+init_state([], State) ->
     State;
-handle_opts([{protocol_period, Val} | Rest], State)
+init_state([{local_member, Val} | Rest], State) ->
+    init_state(Rest, State#state{local_member=Val});
+init_state([{protocol_period, Val} | Rest], State)
   when is_integer(Val) andalso Val > 0 ->
-    handle_opts(Rest, State#state{protocol_period=Val});
-handle_opts([{ack_proxies, Val} | Rest], State)
+    init_state(Rest, State#state{protocol_period=Val});
+init_state([{ack_proxies, Val} | Rest], State)
   when is_integer(Val) andalso Val > 0 ->
-    handle_opts(Rest, State#state{ack_proxies=Val});
-handle_opts([{ack_timeout, Val} | Rest], State)
+    init_state(Rest, State#state{ack_proxies=Val});
+init_state([{ack_timeout, Val} | Rest], State)
   when is_integer(Val) andalso Val > 0 ->
-    handle_opts(Rest, State#state{ack_timeout=Val});
-handle_opts([_ | Rest], State) ->
-    handle_opts(Rest, State).
+    init_state(Rest, State#state{ack_timeout=Val});
+init_state([_ | Rest], State) ->
+    init_state(Rest, State).
 
 handle_protocol_period(#state{current_ping=undefined} = State) ->
     send_next_ping(State);
@@ -141,7 +164,7 @@ handle_ack_timeout(Ref, #state{current_ping=#ping{ref=Ref} = Ping} = State) ->
 
 proxies(AckProxies, State) ->
     #state{current_ping=#ping{terminal=Terminal}} = State,
-    lists:sublist([M || {M, _I} = P <- ping_targets(State),
+    lists:sublist([M || {M, _I} <- ping_targets(State),
 			 M /= Terminal], AckProxies).
 
 handle_ack(Sequence, From, #ping{sequence=Sequence, terminal=From} = Ping, State) ->
