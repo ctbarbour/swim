@@ -42,4 +42,6 @@ stop_gossip(Name) ->
     ok.
 
 init([]) ->
-    {ok, {{one_for_one, 10, 3600}, []} }.
+    Events = {swim_gossip_events, {swim_gossip_events, start_link, []},
+             permanent, 5000, worker, [swim_gossip_events]},
+    {ok, {{one_for_one, 10, 3600}, [Events]} }.

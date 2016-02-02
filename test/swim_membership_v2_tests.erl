@@ -3,7 +3,7 @@
 -include_lib("proper/include/proper.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--define(ME, {{127,0,0,1}, 5000}).
+-define(LOCAL_MEMBER, {{127,0,0,1}, 5000}).
 -define(SUT, swim_membership_v2).
 
 -behavior(proper_statem).
@@ -23,35 +23,42 @@
 	  events = [] :: list({member_status(), member(), incarnation(), transmissions()})
 	 }).
 
+publish(_Name, _Event) ->
+    ok.
+
 membership_v2_local_member_test() ->
-    {ok, Membership} = swim_membership_v2:start_link(?ME, []),
-    ?assertMatch(?ME, swim_membership_v2:local_member(Membership)).
+    {ok, Membership} = swim_membership_v2:start_link(test, ?LOCAL_MEMBER, []),
+    ?assertMatch(?LOCAL_MEMBER, swim_membership_v2:local_member(Membership)).
 
 membership_v2_suspect_timeout_test() ->
+    {ok, EventMgrPid} = swim_gossip_events:start_link(),
     Seed = {{10,10,10,10}, 5000},
-    {ok, Membership} = swim_membership_v2:start_link(?ME,
+    {ok, Membership} = swim_membership_v2:start_link(test, ?LOCAL_MEMBER,
 						     [{suspicion_factor, 1},
 						      {protocol_period, 100},
 						      {seeds, [Seed]}]),
-    ok = swim_membership_v2:suspect(Membership, Seed, 1),
+    _ = swim_membership_v2:suspect(Membership, Seed, 1),
     ok = timer:sleep(100),
     Events = lists:map(
 	       fun({membership, {S, M, _I}}) ->
 		       {S, M}
 	       end, swim_membership_v2:events(Membership)),
+    ok = gen_event:stop(EventMgrPid),
     ?assert(lists:member({faulty, Seed}, Events)).
 
 membership_v2_suspect_timeout_refute_test() ->
+    {ok, EventMgrPid} = swim_gossip_events:start_link(),
     Seed = {{10,10,10,10}, 5000},
-    {ok, Membership} = swim_membership_v2:start_link(?ME,
+    {ok, Membership} = swim_membership_v2:start_link(test, ?LOCAL_MEMBER,
 						     [{suspicion_factor, 10},
 						      {protocol_period, 5000},
 						      {seeds, [Seed]}]),
-    ok = swim_membership_v2:suspect(Membership, Seed, 1),
-    ok = swim_membership_v2:alive(Membership, Seed, 2),
+    _ = swim_membership_v2:suspect(Membership, Seed, 1),
+    _ = swim_membership_v2:alive(Membership, Seed, 2),
     Events = lists:map(fun({membership, {S, M, I}}) ->
 			       {S, M, I}
 		       end, swim_membership_v2:events(Membership)),
+    ok = gen_event:stop(EventMgrPid),
     [?assertNot(lists:member({suspect, Seed, 1}, Events)),
      ?assert(lists:member({alive, Seed, 2}, Events))].
 
@@ -93,7 +100,7 @@ g_member(State) ->
 	      [{3, g_existing_member(State)} || State#state.members /= []]).
 
 initial_state() ->
-    #state{me=?ME}.
+    #state{me=?LOCAL_MEMBER}.
 
 command(State) ->
     oneof([
@@ -212,8 +219,12 @@ prop_membership_v2() ->
     ?FORALL(Cmds, commands(?MODULE),
 	    ?TRAPEXIT(
 	       begin
-		   {ok, Pid} = ?SUT:start_link(?ME, [{suspicion_factor, 1}, {protocol_period, 1}]),
+		   {ok, EventMgrPid} = swim_gossip_events:start_link(),
+		   {ok, Pid} = ?SUT:start_link(sut, ?LOCAL_MEMBER,
+					       [{suspicion_factor, 1},
+						{protocol_period, 1}]),
 		   {H, S, R} = run_commands(?MODULE, Cmds, [{sut, Pid}]),
+		   ok = gen_event:stop(EventMgrPid),
 		   ?WHENFAIL(
 		      io:format("History: ~p\nState: ~p\nResult: ~p\n",
 				[H, S, R]),

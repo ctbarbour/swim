@@ -26,7 +26,12 @@ start_link(Name, LocalMember, Opts) ->
     supervisor:start_link(?MODULE, [Name, LocalMember, Opts]).
 
 init([Name, LocalMember, Opts]) ->
+    Handler = {swim_gossip_events, Name},
+    EventHandler = {{swim_gossip_events, Name},
+                   {swim_event_handler_guard, start_link,
+                    [swim_gossip_events, Handler, [Name]]},
+                   transient, 5000, worker, [swim_event_handler_guard]},
     Gossip = {{swim_gossip_v2, Name},
 	      {swim_gossip_v2, start_link, [Name, LocalMember, Opts]},
 	      transient, 5000, worker, [swim_gossip_v2]},
-    {ok, {{one_for_all, 10, 3600}, [Gossip]}}.
+    {ok, {{one_for_all, 10, 3600}, [EventHandler, Gossip]}}.

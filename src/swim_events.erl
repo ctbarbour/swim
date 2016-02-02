@@ -41,9 +41,16 @@ handle_event(_Event, State) ->
 
 handle_call({subscribe, EventCategory, Pid}, State) ->
     #state{subscriptions=Subscriptions} = State,
-    MRef = erlang:monitor(process, Pid),
-    Subscription = #subscription{pid=Pid, event_category=EventCategory, mref=MRef},
-    {ok, ok, State#state{subscriptions=[Subscription | Subscriptions]}};
+    case lists:keyfind(Pid, #subscription.pid, Subscriptions) of
+	false ->
+	    MRef = erlang:monitor(process, Pid),
+	    Subscription = #subscription{pid=Pid,
+					 event_category=EventCategory,
+					 mref=MRef},
+	    {ok, ok, State#state{subscriptions=[Subscription | Subscriptions]}};
+	_ ->
+	    {ok, ok, State}
+    end;
 handle_call(_Msg, State) ->
     {ok, ok, State}.
 

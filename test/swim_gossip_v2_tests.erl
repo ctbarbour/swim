@@ -2,6 +2,11 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-export([publish/2]).
+
+publish(_Name, _Events) ->
+    ok.
+
 start() ->
     _ = application:ensure_all_started(damocles),
     _ = damocles_lib:teardown_all_local_interface(),
@@ -21,18 +26,25 @@ stop(Pids) ->
 start_members(Keys, [{Address, Port} | Rest]) ->
     _ = damocles:add_interface(Address),
     {ok, Ip} = inet:parse_ipv4_address(Address),
-    {ok, Gossip} = swim_gossip_v2:start_link({Ip, Port}, [{keys, Keys}]),
-    start_other_members([{Ip, Port}], Keys, Rest, [Gossip]).
+    Name = list_to_atom(integer_to_list(Port)),
+    {ok, _Gossip} = swim_gossip_v2:start_link(Name,
+					      {Ip, Port},
+					      [{keys, Keys},
+					       {publish, {?MODULE, publish}}]),
+    start_other_members([{Ip, Port}], Keys, Rest, [Name]).
 
 start_other_members(_Seeds, _Keys, [], Acc) ->
     Acc;
 start_other_members(Seeds, Keys, [{Address, Port} | Rest], Acc) ->
     _ = damocles:add_interface(Address),
     {ok, Ip} = inet:parse_ipv4_address(Address),
-    {ok, Gossip} = swim_gossip_v2:start_link({Ip, Port},
-					     [{keys, Keys},
-					      {seeds, Seeds}]),
-    start_other_members(Seeds, Keys, Rest, [Gossip | Acc]).
+    Name = list_to_atom(integer_to_list(Port)),
+    {ok, _Gossip} = swim_gossip_v2:start_link(Name,
+					      {Ip, Port},
+					      [{keys, Keys},
+					       {publish, {?MODULE, publish}},
+					       {seeds, Seeds}]),
+    start_other_members(Seeds, Keys, Rest, [Name | Acc]).
 
 start_link_test_() ->
     {timeout, 60,

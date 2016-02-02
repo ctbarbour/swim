@@ -9,6 +9,7 @@
 	 terminate/2]).
 
 -record(state, {
+	  name :: atom(),
 	  protocol_period = 3000 :: pos_integer(),
 	  ack_proxies     = 3    :: pos_integer(),
 	  ack_timeout     = 750 :: pos_integer(),
@@ -34,7 +35,7 @@
 -type ping() :: #ping{}.
 
 start_link(Name, LocalMember, Opts) ->
-    gen_server:start_link({local, Name}, ?MODULE, [LocalMember, Opts], []).
+    gen_server:start_link({local, Name}, ?MODULE, [Name, LocalMember, Opts], []).
 
 local_member(Name) ->
     gen_server:call(Name, local_member).
@@ -49,12 +50,12 @@ start_transport({Ip, Port}, Opts) ->
     Keys = proplists:get_value(keys, Opts, []),
     swim_transport:start_link(Ip, Port, Keys).
 
-init([LocalMember, Opts]) ->
+init([Name, LocalMember, Opts]) ->
     State = init_state([{local_member, LocalMember} | Opts]),
-    {ok, Membership} = swim_membership_v2:start_link(LocalMember, Opts),
+    {ok, Membership} = swim_membership_v2:start_link(Name, LocalMember, Opts),
     {ok, Transport} = start_transport(LocalMember, Opts),
     self() ! protocol_period,
-    {ok, State#state{transport=Transport, membership=Membership}}.
+    {ok, State#state{name=Name, transport=Transport, membership=Membership}}.
 
 handle_call(local_member, _From, State) ->
     #state{local_member=LocalMember} = State,
@@ -123,8 +124,8 @@ handle_protocol_period(#state{current_ping=undefined} = State) ->
     send_next_ping(State);
 handle_protocol_period(#state{current_ping=Ping} = State) ->
     #state{membership=Membership} = State,
-    #ping{terminal=Terminal, incarnation=Incarnation} = Ping,
-    ok = swim_membership_v2:suspect(Membership, Terminal, Incarnation),
+    #ping{terminal=Terminal} = Ping,
+    _ = swim_membership_v2:set_status(Membership, Terminal, suspect),
     send_next_ping(State#state{current_ping=undefined}).
 
 send_next_ping(#state{ping_targets=[]} = State) ->
@@ -171,7 +172,7 @@ handle_ack(Sequence, From, #ping{sequence=Sequence, terminal=From} = Ping, State
     #state{membership=Membership} = State,
     #ping{tref=TRef, incarnation=Incarnation} = Ping,
     _ = erlang:cancel_timer(TRef),
-    ok = swim_membership_v2:alive(Membership, From, Incarnation),
+    _ = swim_membership_v2:alive(Membership, From, Incarnation),
     State#state{current_ping=undefined};
 handle_ack(Sequence, From, _CurrentPing, State) ->
     #state{proxy_pings=ProxyPings} = State,
@@ -219,29 +220,25 @@ handle_ping_req(Sequence, {Ip, Port} = Terminal, Origin, State) ->
     State#state{proxy_pings=[Ping | ProxyPings]}.
 
 handle_ping(Sequence, From, State) ->
-    #state{membership=Membership} = State,
-    ok = swim_membership_v2:alive(Membership, From, 0),
-    Me = swim_membership_v2:local_member(Membership),
-    ok = send_ack(From, Sequence, Me, State),
+    #state{local_member=LocalMember, membership=Membership} = State,
+    _ = swim_membership_v2:alive(Membership, From, 0),
+    ok = send_ack(From, Sequence, LocalMember, State),
     State.
 
-handle_events([], State) ->
-    State;
+handle_events([], _State) ->
+    [];
 handle_events(Events, State) ->
-    [handle_event(Event, State) || Event <- Events].
+    lists:flatten([handle_event(Event, State) || Event <- Events]).
 
 handle_event({membership, {alive, Member, Incarnation}}, State) ->
     #state{membership=Membership} = State,
-    ok = swim_membership_v2:alive(Membership, Member, Incarnation),
-    State;
+    swim_membership_v2:alive(Membership, Member, Incarnation);
 handle_event({membership, {suspect, Member, Incarnation}}, State) ->
     #state{membership=Membership} = State,
-    ok = swim_membership_v2:suspect(Membership, Member, Incarnation),
-    State;
+    swim_membership_v2:suspect(Membership, Member, Incarnation);
 handle_event({membership, {faulty, Member, Incarnation}}, State) ->
     #state{membership=Membership} = State,
-    ok = swim_membership_v2:faulty(Membership, Member, Incarnation),
-    State;
-handle_event({user, Event}, State) ->
+    swim_membership_v2:faulty(Membership, Member, Incarnation);
+handle_event({user, Event}, _State) ->
     ok = error_logger:info_msg("User event ~p", [Event]),
-    State.
+    [].
