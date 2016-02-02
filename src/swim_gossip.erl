@@ -1,5 +1,5 @@
--module(swim_gossip_v2).
-
+-module(swim_gossip).
+:
 -behavior(gen_server).
 
 -include("swim.hrl").
@@ -52,7 +52,7 @@ start_transport({Ip, Port}, Opts) ->
 
 init([Name, LocalMember, Opts]) ->
     State = init_state([{local_member, LocalMember} | Opts]),
-    {ok, Membership} = swim_membership_v2:start_link(Name, LocalMember, Opts),
+    {ok, Membership} = swim_membership:start_link(Name, LocalMember, Opts),
     {ok, Transport} = start_transport(LocalMember, Opts),
     self() ! protocol_period,
     {ok, State#state{name=Name, transport=Transport, membership=Membership}}.
@@ -66,7 +66,7 @@ handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 handle_call(members, _From, State) ->
     #state{membership=Membership} = State,
-    {reply, swim_membership_v2:members(Membership), State};
+    {reply, swim_membership:members(Membership), State};
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
@@ -125,7 +125,7 @@ handle_protocol_period(#state{current_ping=undefined} = State) ->
 handle_protocol_period(#state{current_ping=Ping} = State) ->
     #state{membership=Membership} = State,
     #ping{terminal=Terminal} = Ping,
-    _ = swim_membership_v2:set_status(Membership, Terminal, suspect),
+    _ = swim_membership:set_status(Membership, Terminal, suspect),
     send_next_ping(State#state{current_ping=undefined}).
 
 send_next_ping(#state{ping_targets=[]} = State) ->
@@ -142,7 +142,7 @@ send_next_ping(#state{ping_targets=[PingTarget|PingTargets]} = State) ->
 
 ping_targets(State) ->
     #state{membership=Membership} = State,
-    Members = swim_membership_v2:members(Membership),
+    Members = swim_membership:members(Membership),
     [{M, I} || {_, {M, _S, I}} <- lists:keysort(1, [{random:uniform(), N} || N <- Members])].
 
 create_ack_timer(Ref, State) ->
@@ -172,7 +172,7 @@ handle_ack(Sequence, From, #ping{sequence=Sequence, terminal=From} = Ping, State
     #state{membership=Membership} = State,
     #ping{tref=TRef, incarnation=Incarnation} = Ping,
     _ = erlang:cancel_timer(TRef),
-    _ = swim_membership_v2:alive(Membership, From, Incarnation),
+    _ = swim_membership:alive(Membership, From, Incarnation),
     State#state{current_ping=undefined};
 handle_ack(Sequence, From, _CurrentPing, State) ->
     #state{proxy_pings=ProxyPings} = State,
@@ -187,7 +187,7 @@ handle_ack(Sequence, From, _CurrentPing, State) ->
 
 send_ack({Ip, Port}, Sequence, From, State) ->
     #state{transport=Transport, membership=Membership} = State,
-    Events = swim_membership_v2:events(Membership),
+    Events = swim_membership:events(Membership),
     Msg = swim_messages:encode_ack(Sequence, From, Events),
     ok = swim_transport:send(Transport, Ip, Port, Msg),
     ok.
@@ -199,7 +199,7 @@ send_ping_req({Ip, Port}, Terminal, Sequence, State) ->
 
 send_ping({{Ip, Port} = To, Incarnation}, From, Sequence, State) ->
     #state{transport=Transport, membership=Membership} = State,
-    Events = swim_membership_v2:events(Membership),
+    Events = swim_membership:events(Membership),
     Msg = swim_messages:encode_ping(Sequence, Events),
     ok = swim_transport:send(Transport, Ip, Port, Msg),
     Ref = make_ref(),
@@ -214,14 +214,14 @@ handle_ping_req(Sequence, {Ip, Port} = Terminal, Origin, State) ->
     #state{proxy_pings=ProxyPings, membership=Membership,
 	   transport=Transport} = State,
     Ping = #ping{origin=Origin, terminal=Terminal},
-    Events = swim_membership_v2:events(Membership),
+    Events = swim_membership:events(Membership),
     Msg = swim_messages:encode_ping(Sequence, Events),
     ok = swim_transport:send(Transport, Ip, Port, Msg),
     State#state{proxy_pings=[Ping | ProxyPings]}.
 
 handle_ping(Sequence, From, State) ->
     #state{local_member=LocalMember, membership=Membership} = State,
-    _ = swim_membership_v2:alive(Membership, From, 0),
+    _ = swim_membership:alive(Membership, From, 0),
     ok = send_ack(From, Sequence, LocalMember, State),
     State.
 
@@ -232,13 +232,13 @@ handle_events(Events, State) ->
 
 handle_event({membership, {alive, Member, Incarnation}}, State) ->
     #state{membership=Membership} = State,
-    swim_membership_v2:alive(Membership, Member, Incarnation);
+    swim_membership:alive(Membership, Member, Incarnation);
 handle_event({membership, {suspect, Member, Incarnation}}, State) ->
     #state{membership=Membership} = State,
-    swim_membership_v2:suspect(Membership, Member, Incarnation);
+    swim_membership:suspect(Membership, Member, Incarnation);
 handle_event({membership, {faulty, Member, Incarnation}}, State) ->
     #state{membership=Membership} = State,
-    swim_membership_v2:faulty(Membership, Member, Incarnation);
+    swim_membership:faulty(Membership, Member, Incarnation);
 handle_event({user, Event}, _State) ->
     ok = error_logger:info_msg("User event ~p", [Event]),
     [].
