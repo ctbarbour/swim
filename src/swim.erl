@@ -48,7 +48,7 @@ stop_gossip(Name) ->
 %% @doc Returns the known members for a given gossip peer.
 -spec members(atom()) -> [member()].
 members(Name) ->
-    swim_gossip_v2:members(Name).
+    swim_gossip:members(Name).
 
 %% @doc Publishes a term to the rest of the gossip peers.
 -spec publish(atom(), term()) -> ok.

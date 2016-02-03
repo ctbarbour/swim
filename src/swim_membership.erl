@@ -1,4 +1,4 @@
--module(swim_membership_v2).
+-module(swim_membership).
 
 -behavior(gen_server).
 

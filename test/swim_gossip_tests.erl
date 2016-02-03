@@ -1,4 +1,4 @@
--module(swim_gossip_v2_tests).
+-module(swim_gossip_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -17,7 +17,7 @@ start() ->
     start_members(Keys, Interfaces).
 
 stop(Pids) ->
-    _ = [swim_gossip_v2:stop(P) || P <- Pids],
+    _ = [swim_gossip:stop(P) || P <- Pids],
     _ = damocles_lib:teardown_all_local_interface(),
     _ = damocles_lib:teardown_traffic_control(),
     _ = damocles:stop(),
@@ -27,7 +27,7 @@ start_members(Keys, [{Address, Port} | Rest]) ->
     _ = damocles:add_interface(Address),
     {ok, Ip} = inet:parse_ipv4_address(Address),
     Name = list_to_atom(integer_to_list(Port)),
-    {ok, _Gossip} = swim_gossip_v2:start_link(Name,
+    {ok, _Gossip} = swim_gossip:start_link(Name,
 					      {Ip, Port},
 					      [{keys, Keys},
 					       {publish, {?MODULE, publish}}]),
@@ -39,7 +39,7 @@ start_other_members(Seeds, Keys, [{Address, Port} | Rest], Acc) ->
     _ = damocles:add_interface(Address),
     {ok, Ip} = inet:parse_ipv4_address(Address),
     Name = list_to_atom(integer_to_list(Port)),
-    {ok, _Gossip} = swim_gossip_v2:start_link(Name,
+    {ok, _Gossip} = swim_gossip:start_link(Name,
 					      {Ip, Port},
 					      [{keys, Keys},
 					       {publish, {?MODULE, publish}},
@@ -59,8 +59,8 @@ start_link_test_() ->
 	      ok = timer:sleep(10000),
 	      [First | Rest] = lists:map(
 				 fun(Pid) ->
-					 Ms = swim_gossip_v2:members(Pid),
-					 L = swim_gossip_v2:local_member(Pid),
+					 Ms = swim_gossip:members(Pid),
+					 L = swim_gossip:local_member(Pid),
 					 lists:sort([L | lists:map(
 							   fun({M, _, _}) ->
 								   M

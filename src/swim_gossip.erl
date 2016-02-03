@@ -1,5 +1,5 @@
 -module(swim_gossip).
-:
+
 -behavior(gen_server).
 
 -include("swim.hrl").
