@@ -46,7 +46,7 @@ start_other_members(Seeds, Keys, [{Address, Port} | Rest], Acc) ->
 					       {seeds, Seeds}]),
     start_other_members(Seeds, Keys, Rest, [Name | Acc]).
 
-start_link_test_() ->
+stress_test_x() ->
     {timeout, 60,
      {setup,
       fun start/0,

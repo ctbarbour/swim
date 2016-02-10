@@ -22,7 +22,6 @@
 
 -export([start_gossip/3,
          stop_gossip/1,
-         publish/2,
          subscribe/2,
          unsubscribe/2,
          members/1,
@@ -49,11 +48,6 @@ stop_gossip(Name) ->
 -spec members(atom()) -> [member()].
 members(Name) ->
     swim_gossip:members(Name).
-
-%% @doc Publishes a term to the rest of the gossip peers.
--spec publish(atom(), term()) -> ok.
-publish(Name, Event) ->
-    swim_gossip:gossip(Name, Event).
 
 %% @doc Subscribes to events on a given gossip group.
 %%

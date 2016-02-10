@@ -1,6 +1,6 @@
 {application, swim,
  [{description, "An OTP application"},
-  {vsn, 'git'},
+  {vsn, "0.0.0"},
   {registered, []},
   {mod, {'swim_app', []}},
   {applications,

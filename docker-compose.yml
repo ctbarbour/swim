@@ -1,0 +1,18 @@
+base:
+  command: /bin/true
+  build: .
+
+test:
+  cap_add:
+    - NET_ADMIN
+  image: swim_base
+  command: ./rebar3 do xref, eunit
+  hostname: swim
+  domainname: swim.local
+  volumes:
+    - ./src:/usr/src/app/src
+    - ./test:/usr/src/app/test
+    - ./rebar.config:/usr/src/app/rebar.config
+    - ./rebar3:/usr/src/app/rebar3
+  volumes_from:
+    - base

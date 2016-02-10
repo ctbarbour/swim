@@ -4,7 +4,7 @@
 
 -include("swim.hrl").
 
--export([start_link/3, members/1, local_member/1, stop/1]).
+-export([start_link/3, members/1, local_member/1, stop/1, rotate_keys/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
 
@@ -37,6 +37,9 @@
 start_link(Name, LocalMember, Opts) ->
     gen_server:start_link({local, Name}, ?MODULE, [Name, LocalMember, Opts], []).
 
+rotate_keys(Name, NewKey) ->
+    gen_server:call(Name, {rotate_keys, NewKey}).
+
 local_member(Name) ->
     gen_server:call(Name, local_member).
 
@@ -57,6 +60,10 @@ init([Name, LocalMember, Opts]) ->
     self() ! protocol_period,
     {ok, State#state{name=Name, transport=Transport, membership=Membership}}.
 
+handle_call({rotate_keys, NewKey}, _From, State) ->
+    #state{transport=Transport} = State,
+    ok = swim_transport:rotate_keys(Transport, NewKey),
+    {reply, ok, State};
 handle_call(local_member, _From, State) ->
     #state{local_member=LocalMember} = State,
     {reply, LocalMember, State};

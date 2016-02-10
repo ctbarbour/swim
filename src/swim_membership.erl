@@ -4,7 +4,6 @@
 
 -include("swim.hrl").
 
-
 -record(state, {
 	  name                        :: atom(),
 	  local_member                :: member(),
@@ -25,17 +24,12 @@
 
 -record(progress, {
 	  size_remaining :: pos_integer(),
-	  broadcasts = [] :: [binary()],
+	  broadcasts = [] :: [{membership, binary()}],
 	  max_transmissions :: non_neg_integer()
 	 }).
 
 -type member_state() :: #member_state{}.
 -type state() :: #state{}.
-
--type membership_opt() :: {suspicion_factor, pos_integer()} |
-			  {protocol_period, pos_integer()} |
-			  {retransmit_factor, pos_integer()} |
-			  {seeds, [member()]}.
 
 -export([start_link/3, alive/3, suspect/3, faulty/3, members/1,
 	 events/1, events/2, local_member/1, set_status/3]).
@@ -54,23 +48,18 @@ events(Pid, MaxSize) ->
 set_status(Pid, Member, Status) ->
     gen_server:cast(Pid, {set_status, Member, Status}).
 
--spec alive(pid(), member(), non_neg_integer()) -> list().
 alive(Pid, Member, Incarnation) ->
     gen_server:call(Pid, {alive, Member, Incarnation}).
 
--spec suspect(pid(), member(), non_neg_integer()) -> list().
 suspect(Pid, Member, Incarnation) ->
     gen_server:call(Pid, {suspect, Member, Incarnation}).
 
--spec faulty(pid(), member(), non_neg_integer()) -> list().
 faulty(Pid, Member, Incarnation) ->
     gen_server:call(Pid, {faulty, Member, Incarnation}).
 
--spec members(pid()) -> [member()].
 members(Pid) ->
     gen_server:call(Pid, members).
 
--spec start_link(atom(), member(), [membership_opt()]) -> {ok, pid()}.
 start_link(Name, LocalMember, Opts) ->
     gen_server:start_link(?MODULE, [Name, LocalMember, Opts], []).
 
@@ -129,7 +118,8 @@ handle_call({alive, Member, Incarnation}, _From, #state{local_member=Member} = S
 	false ->
 	    {Events, NewState} = refute(Incarnation, State),
 	    ok = publish_events(Events, State),
-	    {reply, Events, enqueue(Events, NewState)}
+	    EnqueuedState = enqueue(Events, NewState),
+	    {reply, Events, EnqueuedState}
     end;
 handle_call({alive, Member, Incarnation}, _From, State) ->
     #state{members=Members} = State,
@@ -263,19 +253,16 @@ code_change(_OldVsn, State, _Extra) ->
 terminate(_Reason, _State) ->
     ok.
 
--spec suspicion_timeout(state()) -> pos_integer().
 suspicion_timeout(State) ->
     #state{members=Members, suspicion_factor=Factor,
 	   protocol_period=ProtocolPeriod} = State,
     round(math:log(maps:size(Members) + 2)) * Factor * ProtocolPeriod.
 
--spec suspicion_timer(member(), member_state(), state()) -> reference().
 suspicion_timer(Member, MemberState, State) ->
     #member_state{incarnation=Incarnation} = MemberState,
     Msg = {suspect_timeout, Member, Incarnation},
     erlang:send_after(suspicion_timeout(State), self(), Msg).
 
--spec refute(non_neg_integer(), state()) -> {list(), state()}.
 refute(Incarnation, #state{incarnation=CurrentIncarnation} = State)
   when Incarnation >= CurrentIncarnation ->
     #state{local_member=LocalMember} = State,
@@ -312,15 +299,16 @@ dequeue(Progress, [NextBroadcast | Rest] = L, Remaining) ->
 	    {Broadcasts, lists:flatten([L | Remaining])}
     end.
 
-enqueue([], State) ->
-    State;
-enqueue([{_Type, Subject, _Inc} = Event | Rest], State) ->
+enqueue(Events, State) ->
     #state{membership_events=MembershipEvents} = State,
-    FilteredEvents = lists:filter(fun({S, _, _}) ->
-					  S =/= Subject
-				  end, MembershipEvents),
-    NewMembershipEvents = [{Subject, 0, Event} | FilteredEvents],
-    enqueue(Rest, State#state{membership_events=NewMembershipEvents}).
+    NewMembershipEvents = lists:foldl(fun do_enqueue/2, MembershipEvents, Events),
+    State#state{membership_events=NewMembershipEvents}.
+
+do_enqueue({_Status, Member, _Inc} = Event, KnownEvents) ->
+    FilteredEvents = lists:filter(fun({M, _, _I}) ->
+					M =/= Member
+				end, KnownEvents),
+    [{Member, 0, Event} | FilteredEvents].
 
 -ifdef(TEST).
 publish_events(_, _) ->
