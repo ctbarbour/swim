@@ -2,6 +2,28 @@ base:
   command: /bin/true
   build: .
 
+console:
+  command: ./rebar3 shell
+  image: swim_base
+  hostname: swim
+  domainname: docker.local
+  volumes:
+    - ./src:/usr/src/app/src
+    - ./rebar3:/usr/src/app/rebar3
+    - ./rebar.config:/usr/src/app/rebar.config
+  volumes_from:
+    - base
+
+compile:
+  command: ./rebar3 compile
+  image: swim_base
+  volumes:
+    - ./src:/usr/src/app/src
+    - ./rebar.config:/usr/src/app/rebar.config
+    - ./rebar3:/usr/src/app/rebar3
+  volumes_from:
+    - base
+
 test:
   cap_add:
     - NET_ADMIN

@@ -29,7 +29,6 @@
 	 }).
 
 -type member_state() :: #member_state{}.
--type state() :: #state{}.
 
 -export([start_link/3, alive/3, suspect/3, faulty/3, members/1,
 	 events/1, events/2, local_member/1, set_status/3]).
