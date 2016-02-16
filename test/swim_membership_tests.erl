@@ -13,51 +13,44 @@
 
 -type member_status() :: alive | suspect | faulty.
 -type incarnation() :: non_neg_integer().
--type transmissions() :: non_neg_integer().
 -type member() :: {inet:ip_address(), inet:port_number()}.
 
 -record(state, {
 	  me :: member(),
 	  incarnation = 0 :: incarnation(),
-	  members = [] :: [{member(), member_status(), incarnation()}],
-	  events = [] :: list({member_status(), member(), incarnation(), transmissions()})
+	  members = [] :: [{member(), member_status(), incarnation()}]
 	 }).
 
 membership_v2_local_member_test() ->
-    {ok, Membership} = swim_membership:start_link(test, ?LOCAL_MEMBER, []),
+    {ok, EventMgrPid} = gen_event:start_link(),
+    {ok, Membership} = swim_membership:start_link(?LOCAL_MEMBER, EventMgrPid, []),
     ?assertMatch(?LOCAL_MEMBER, swim_membership:local_member(Membership)).
 
 membership_v2_suspect_timeout_test() ->
-    {ok, EventMgrPid} = swim_gossip_events:start_link(),
+    {ok, EventMgrPid} = gen_event:start_link(),
     Seed = {{10,10,10,10}, 5000},
-    {ok, Membership} = swim_membership:start_link(test, ?LOCAL_MEMBER,
-						     [{suspicion_factor, 1},
-						      {protocol_period, 100},
-						      {seeds, [Seed]}]),
+    {ok, Membership} = swim_membership:start_link(?LOCAL_MEMBER, EventMgrPid,
+						  [{suspicion_factor, 1},
+						   {protocol_period, 100},
+						   {seeds, [Seed]}]),
     _ = swim_membership:suspect(Membership, Seed, 1),
     ok = timer:sleep(100),
-    Events = lists:map(
-	       fun({membership, {S, M, _I}}) ->
-		       {S, M}
-	       end, swim_membership:events(Membership)),
+    Members = [M || {M, _, _} <- swim_membership:members(Membership)],
     ok = gen_event:stop(EventMgrPid),
-    ?assert(lists:member({faulty, Seed}, Events)).
+    ?assertNot(lists:member(Seed, Members)).
 
 membership_v2_suspect_timeout_refute_test() ->
-    {ok, EventMgrPid} = swim_gossip_events:start_link(),
+    {ok, EventMgrPid} = gen_event:start_link(),
     Seed = {{10,10,10,10}, 5000},
-    {ok, Membership} = swim_membership:start_link(test, ?LOCAL_MEMBER,
-						     [{suspicion_factor, 10},
-						      {protocol_period, 5000},
-						      {seeds, [Seed]}]),
+    {ok, Membership} = swim_membership:start_link(?LOCAL_MEMBER, EventMgrPid,
+						  [{suspicion_factor, 10},
+						   {protocol_period, 5000},
+						   {seeds, [Seed]}]),
     _ = swim_membership:suspect(Membership, Seed, 1),
     _ = swim_membership:alive(Membership, Seed, 2),
-    Events = lists:map(fun({membership, {S, M, I}}) ->
-			       {S, M, I}
-		       end, swim_membership:events(Membership)),
+    Members = swim_membership:members(Membership),
     ok = gen_event:stop(EventMgrPid),
-    [?assertNot(lists:member({suspect, Seed, 1}, Events)),
-     ?assert(lists:member({alive, Seed, 2}, Events))].
+    ?assert(lists:member({Seed, alive, 2}, Members)).
 
 membership_v2_test_() ->
     {timeout, 60,
@@ -104,8 +97,7 @@ command(State) ->
 	   {call, ?SUT, alive, [{var, sut}, g_member(State), g_incarnation()]},
 	   {call, ?SUT, suspect, [{var, sut}, g_member(State), g_incarnation()]},
 	   {call, ?SUT, faulty, [{var, sut}, g_member(State), g_incarnation()]},
-	   {call, ?SUT, members, [{var, sut}]},
-	   {call, ?SUT, events, [{var, sut}, integer()]}
+	   {call, ?SUT, members, [{var, sut}]}
 	  ]).
 
 precondition(_State, _Call) ->
@@ -115,109 +107,80 @@ postcondition(S, {call, _Mod, members, _Args}, Members) ->
     #state{members=KnownMembers} = S,
     ordsets:subtract(ordsets:from_list(KnownMembers),
 		     ordsets:from_list(Members)) == [];
-postcondition(S, {call, _Mod, events, _Args}, Events) ->
-    #state{events=KnownEvents, me=Me,
-	   incarnation=LocalIncarnation} = S,
-    lists:all(
-      fun({membership, {Status, Member, Incarnation}}) ->
-	      case lists:keyfind(Member, 2, KnownEvents) of
-		  {Status, Member, Incarnation, _T} ->
-		      true;
-		  false ->
-		      case {Member, LocalIncarnation} of
-			  {Me, Incarnation} ->
-			      true;
-			  _Other ->
-			      false
-		      end;
-		  _Other ->
-		      false
-	      end
-      end, Events);
 postcondition(_State, {call, _Mod, _, _Args}, _R) ->
     true.
 
 next_state(S, _V, {call, _Mod, members, _Args}) ->
     S;
 next_state(S, _V, {call, _Mod, alive, [_Pid, Member, Incarnation]}) ->
-    #state{members=KnownMembers, events=Events,
-	  incarnation=LocalIncarnation} = S,
+    #state{members=KnownMembers, incarnation=LocalIncarnation} = S,
     case S#state.me == Member of
 	true ->
 	    case Incarnation > LocalIncarnation of
 		true ->
-		    S#state{events=[{alive, Member, Incarnation + 1, 0} | Events],
-			    incarnation=Incarnation + 1};
+		    S#state{incarnation=Incarnation + 1};
 		false ->
-		    S#state{events=[{alive, Member, LocalIncarnation, 0} | Events]}
+		    S
 	    end;
 	false ->
 	    case lists:keytake(Member, 1, KnownMembers) of
 		false ->
-		    NewEvents = [{alive, Member, Incarnation, 0} | Events],
 		    NewMembers = [{Member, alive, Incarnation} | KnownMembers],
-		    S#state{members=NewMembers, events=NewEvents};
+		    S#state{members=NewMembers};
 		{value, {Member, _CurrentStatus, CurrentIncarnation}, Rest}
 		  when Incarnation > CurrentIncarnation ->
-		    NewEvents = [{alive, Member, Incarnation, 0} | Events],
 		    NewMembers = [{Member, alive, Incarnation} | Rest],
-		    S#state{members=NewMembers, events=NewEvents};
+		    S#state{members=NewMembers};
 		_ ->
 		    S
 	    end
     end;
 next_state(#state{me=Me} = S, _V, {call, _Mod, suspect, [_Pid, Me, Incarnation]}) ->
-    #state{incarnation=LocalIncarnation, events=Events} = S,
+    #state{incarnation=LocalIncarnation} = S,
     case Incarnation >= LocalIncarnation of
 	true ->
-	    S#state{events=[{alive, Me, Incarnation + 1, 0} | Events],
-		    incarnation=Incarnation + 1};
+	    S#state{incarnation=Incarnation + 1};
 	false ->
-	    S#state{events=[{alive, Me, LocalIncarnation, 0} | Events]}
+	    S
     end;
 next_state(S, _V, {call, _Mod, suspect, [_Pid, Member, Incarnation]}) ->
-    #state{members=KnownMembers, events=Events} = S,
+    #state{members=KnownMembers} = S,
     case lists:keytake(Member, 1, KnownMembers) of
 	false ->
 	    S;
 	{value, {Member, _CurrentStatus, CurrentIncarnation}, Rest}
 	  when Incarnation >= CurrentIncarnation ->
-	    NewEvents = [{suspect, Member, Incarnation, 0} | Events],
 	    NewMembers = [{Member, suspect, Incarnation} | Rest],
-	    S#state{members=NewMembers, events=NewEvents};
+	    S#state{members=NewMembers};
 	_ ->
 	    S
     end;
 next_state(#state{me=Me} = S, _V, {call, _Mod, faulty, [_, Me, Incarnation]}) ->
-    #state{incarnation=LocalIncarnation, events=Events} = S,
+    #state{incarnation=LocalIncarnation} = S,
     case Incarnation >= LocalIncarnation of
 	true ->
-	    S#state{incarnation=Incarnation + 1,
-		    events=[{alive, Me, Incarnation + 1, 0} | Events]};
+	    S#state{incarnation=Incarnation + 1};
 	false ->
-	    S#state{events=[{alive, Me, LocalIncarnation, 0} | Events]}
+	    S
     end;
 next_state(S, _V, {call, _Mod, faulty, [_Pid, Member, Incarnation]}) ->
-    #state{members=KnownMembers, events=Events} = S,
+    #state{members=KnownMembers} = S,
     case lists:keytake(Member, 1, KnownMembers) of
 	false ->
 	    S;
 	{value, {Member, _CurrentStatus, CurrentIncarnation}, Rest}
 	  when Incarnation >= CurrentIncarnation ->
-	    NewEvents = [{faulty, Member, CurrentIncarnation, 0} | Events],
-	    S#state{members=Rest, events=NewEvents};
+	    S#state{members=Rest};
 	_ ->
 	    S
-    end;
-next_state(S, _V, {call, _Mod, events, [_Pid, _Size]}) ->
-    S.
+    end.
 
 prop_membership_v2() ->
     ?FORALL(Cmds, commands(?MODULE),
 	    ?TRAPEXIT(
 	       begin
-		   {ok, EventMgrPid} = swim_gossip_events:start_link(),
-		   {ok, Pid} = ?SUT:start_link(sut, ?LOCAL_MEMBER,
+		   {ok, EventMgrPid} = gen_event:start_link(),
+		   {ok, Pid} = ?SUT:start_link(?LOCAL_MEMBER, EventMgrPid,
 					       [{suspicion_factor, 1},
 						{protocol_period, 1}]),
 		   {_H, _S, R} = run_commands(?MODULE, Cmds, [{sut, Pid}]),

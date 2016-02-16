@@ -17,7 +17,7 @@ start() ->
     start_members(Keys, Interfaces).
 
 stop(Pids) ->
-    _ = [swim_gossip:stop(P) || P <- Pids],
+    _ = [swim:stop(P) || P <- Pids],
     _ = damocles_lib:teardown_all_local_interface(),
     _ = damocles_lib:teardown_traffic_control(),
     _ = damocles:stop(),
@@ -26,25 +26,17 @@ stop(Pids) ->
 start_members(Keys, [{Address, Port} | Rest]) ->
     _ = damocles:add_interface(Address),
     {ok, Ip} = inet:parse_ipv4_address(Address),
-    Name = list_to_atom(integer_to_list(Port)),
-    {ok, _Gossip} = swim_gossip:start_link(Name,
-					      {Ip, Port},
-					      [{keys, Keys},
-					       {publish, {?MODULE, publish}}]),
-    start_other_members([{Ip, Port}], Keys, Rest, [Name]).
+    {ok, _Gossip} = swim:start_link({Ip, Port}, Keys, []),
+    start_other_members([{Ip, Port}], Keys, Rest, [{Ip, Port}]).
 
 start_other_members(_Seeds, _Keys, [], Acc) ->
     Acc;
 start_other_members(Seeds, Keys, [{Address, Port} | Rest], Acc) ->
     _ = damocles:add_interface(Address),
     {ok, Ip} = inet:parse_ipv4_address(Address),
-    Name = list_to_atom(integer_to_list(Port)),
-    {ok, _Gossip} = swim_gossip:start_link(Name,
-					      {Ip, Port},
-					      [{keys, Keys},
-					       {publish, {?MODULE, publish}},
-					       {seeds, Seeds}]),
-    start_other_members(Seeds, Keys, Rest, [Name | Acc]).
+    {ok, _Gossip} = swim_gossip:start_link({Ip, Port}, Keys,
+					   [{seeds, Seeds}]),
+    start_other_members(Seeds, Keys, Rest, [{Ip, Port} | Acc]).
 
 stress_test_x() ->
     {timeout, 60,
@@ -59,8 +51,8 @@ stress_test_x() ->
 	      ok = timer:sleep(10000),
 	      [First | Rest] = lists:map(
 				 fun(Pid) ->
-					 Ms = swim_gossip:members(Pid),
-					 L = swim_gossip:local_member(Pid),
+					 Ms = swim:members(Pid),
+					 L = swim:local_member(Pid),
 					 lists:sort([L | lists:map(
 							   fun({M, _, _}) ->
 								   M
