@@ -69,6 +69,8 @@
 	 encode_leave/1,
 	 encode_event/1,
 	 encode_events/1,
+	 decode_events/1,
+	 decode_event/2,
 	 decode/1,
 	 encrypt/3,
 	 decrypt/3,

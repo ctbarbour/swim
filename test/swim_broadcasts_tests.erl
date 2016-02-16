@@ -77,8 +77,9 @@ postcondition(_S, {call, _Mod, membership, _Args}, _R) ->
     true;
 postcondition(S, {call, _Mod, dequeue, _Args}, Broadcasts) ->
     #state{events=KnownEvents} = S,
+    DecodedEvents = swim_messages:decode_events(Broadcasts),
     ordsets:subtract(ordsets:from_list([E || {_T, E} <- KnownEvents]),
-		     ordsets:from_list([B || {membership, B} <- Broadcasts])) == [].
+		     ordsets:from_list([B || {membership, B} <- DecodedEvents])) == [].
 
 prop_swim_broadcasts() ->
     ?FORALL(Cmds, commands(?MODULE),

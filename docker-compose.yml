@@ -7,6 +7,8 @@ console:
   image: swim_base
   hostname: swim
   domainname: docker.local
+  ports:
+    - "5000:5000/udp"
   volumes:
     - ./src:/usr/src/app/src
     - ./rebar3:/usr/src/app/rebar3

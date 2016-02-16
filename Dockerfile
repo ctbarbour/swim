@@ -10,7 +10,7 @@ RUN apt-get update -qq -y && \
     apt-get install -qq -y sudo && \
     apt-get clean
 
-EXPOSE 5888/udp
+EXPOSE 5000/udp
 
 VOLUME /root/.cache
 VOLUME /usr/src/app/_build
