@@ -3,7 +3,8 @@
 
 -include("swim.hrl").
 
--export([start_link/3, members/1, publish/2, local_member/1, stop/1, rotate_keys/2]).
+-export([start_link/3, start_link/4, members/1, publish/2, local_member/1,
+	 stop/1, rotate_keys/2, child_spec/4, subscribe/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
 
@@ -11,7 +12,7 @@
 	  owner                  :: pid(),
 	  protocol_period = 3000 :: pos_integer(),
 	  ack_proxies     = 3    :: pos_integer(),
-	  ack_timeout     = 750 :: pos_integer(),
+	  ack_timeout     = 750  :: pos_integer(),
 	  current_ping           :: ping(),
 	  local_member           :: member(),
 	  proxy_pings     = []   :: [ping()],
@@ -34,6 +35,9 @@
 
 -type ping() :: #ping{}.
 
+start_link(Name, LocalMember, Keys, Opts) ->
+    gen_server:start_link({local, Name}, ?MODULE, [self(), LocalMember, Keys, Opts], []).
+
 start_link(LocalMember, Keys, Opts) ->
     gen_server:start_link(?MODULE, [self(), LocalMember, Keys, Opts], []).
 
@@ -48,6 +52,13 @@ members(Pid) ->
 
 publish(Pid, Event) ->
     gen_server:cast(Pid, {publish, Event}).
+
+subscribe(Pid) ->
+    gen_server:cast(Pid, {subscribe, self()}).
+
+child_spec(Name, LocalMember, Keys, Opts) ->
+    {Name, {swim, start_link, [Name, LocalMember, Keys, Opts]},
+     permanent, 5000, worker, [swim]}.
 
 stop(Pid) ->
     gen_server:call(Pid, stop).
@@ -102,6 +113,11 @@ handle_call(members, _From, State) ->
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
+handle_cast({subscribe, Subscriber}, State) ->
+    #state{broadcasts=EventMgrPid} = State,
+    ok = swim_subscriptions:subscribe(EventMgrPid, user, Subscriber),
+    ok = swim_subscriptions:subscribe(EventMgrPid, membership, Subscriber),
+    {noreply, State};
 handle_cast({publish, Event}, State) ->
     #state{broadcasts=EventMgrPid} = State,
     ok = swim_broadcasts:user(EventMgrPid, Event),
