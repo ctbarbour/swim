@@ -63,8 +63,8 @@ child_spec(Name, LocalMember, Keys, Opts) ->
 stop(Pid) ->
     gen_server:call(Pid, stop).
 
-start_transport({Ip, Port}, Keys) ->
-    swim_transport:start_link(Ip, Port, Keys).
+start_transport({_Ip, Port}, Keys) ->
+    swim_transport:start_link({0,0,0,0}, Port, Keys).
 
 start_event_handlers(Owner) ->
     {ok, SwimEvents} = gen_event:start_link(),
