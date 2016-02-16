@@ -20,7 +20,65 @@
 -include_lib("proper/include/proper.hrl").
 -include_lib("eunit/include/eunit.hrl").
 
--import(swim_test_utils, [sequence/0, member/0, swim_event/0, swim_message/0]).
+ip_address() ->
+    oneof([
+	   tuple([integer(0, 255) || _ <- lists:seq(0, 3)]),
+	   tuple([integer(0, 65535) || _ <- lists:seq(0, 7)])
+	  ]).
+
+port_number() ->
+    integer(0, 65535).
+
+member_status() ->
+    oneof([alive, suspect]).
+
+incarnation() ->
+    integer(0, inf).
+
+membership_event() ->
+    ?LET({Status, Member, Inc},
+	 {member_status(), member(), incarnation()},
+	 {membership, {Status, Member, Inc}}).
+
+user_event() ->
+    ?LET(Term, term(), {user, Term}).
+
+sequence() ->
+    integer(0, inf).
+
+member() ->
+    tuple([ip_address(), port_number()]).
+
+swim_event() ->
+    oneof([membership_event(), user_event()]).
+
+sized_swim_events() ->
+    MaxSize = swim_messages:event_size_limit(),
+    ?SIZED(_S, ?LET(Events, list(swim_event()),
+		   begin
+		       case size(swim_messages:encode_events(Events)) of
+			   Size when Size >= MaxSize ->
+			       resize(0, list(swim_event()));
+			   _ ->
+			       Events
+		       end
+		   end)).
+
+ack() ->
+    ?LET({Seq, Target, Events}, {sequence(), member(),
+				 sized_swim_events()},
+	 swim_messages:encode_ack(Seq, Target, Events)).
+
+ping() ->
+    ?LET({Seq, Events}, {sequence(), sized_swim_events()},
+	 swim_messages:encode_ping(Seq, Events)).
+
+ping_req() ->
+    ?LET({Seq, Target}, {sequence(), member()},
+	 swim_messages:encode_ping_req(Seq, Target)).
+
+swim_message() ->
+    oneof([ack(), ping(), ping_req()]).
 
 swim_messages_test_() ->
     {timeout, 60, ?_assert(run_props())}.

@@ -1,7 +1,8 @@
 -module(swim_broadcasts).
 -behavior(gen_event).
 
--export([membership/2, user/2, enqueue/3, dequeue/2, dequeue/3]).
+-export([max_transmissions/2, membership/2, user/2, enqueue/3,
+	 dequeue/2, dequeue/3]).
 -export([init/1, handle_event/2, handle_call/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
@@ -15,10 +16,8 @@
 	  user_events       = [] :: [{non_neg_integer(), binary()}]
 	 }).
 
-init([]) ->
-    init([5]);
-init([RetransmitFactor]) ->
-    {ok, #state{retransmit_factor=RetransmitFactor}}.
+max_transmissions(NumMembers, RetransmitFactor) ->
+    round(math:log(NumMembers + 1)) * RetransmitFactor.
 
 membership(EventMgrPid, Event) ->
     enqueue(EventMgrPid, membership, Event).
@@ -35,6 +34,11 @@ dequeue(EventMgrPid, NumMembers) ->
 
 dequeue(EventMgrPid, NumMembers, MaxSize) ->
     gen_event:call(EventMgrPid, ?MODULE, {dequeue, MaxSize, NumMembers}).
+
+init([]) ->
+    init([5]);
+init([RetransmitFactor]) ->
+    {ok, #state{retransmit_factor=RetransmitFactor}}.
 
 handle_event({user, Event}, State) ->
     #state{user_events=Events} = State,
@@ -69,9 +73,6 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-max_transmissions(NumMembers, RetransmitFactor) ->
-    round(math:log(NumMembers + 1)) * RetransmitFactor.
 
 do_dequeue(MaxSize, MaxTransmissions, Events) ->
     SortedEvents = lists:keysort(1, Events),

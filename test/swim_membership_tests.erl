@@ -54,7 +54,7 @@ membership_v2_suspect_timeout_refute_test() ->
 
 membership_v2_test_() ->
     {timeout, 60,
-     ?_assert(proper:quickcheck(prop_membership_v2(), [{numtests, 500}, {to_file, user}]))}.
+     ?_assert(proper:quickcheck(prop_membership(), [{numtests, 500}, {to_file, user}]))}.
 
 g_ipv4_address() ->
     tuple([integer(0, 255) || _ <- lists:seq(0, 3)]).
@@ -175,7 +175,7 @@ next_state(S, _V, {call, _Mod, faulty, [_Pid, Member, Incarnation]}) ->
 	    S
     end.
 
-prop_membership_v2() ->
+prop_membership() ->
     ?FORALL(Cmds, commands(?MODULE),
 	    ?TRAPEXIT(
 	       begin
