@@ -1,7 +1,7 @@
--module(swim_events).
+-module(swim_subscriptions).
 -behavior(gen_event).
 
--export([start_link/0, subscribe/3, membership/2]).
+-export([subscribe/3]).
 -export([init/1, handle_event/2, handle_call/2, handle_info/2, terminate/2,
 	 code_change/3]).
 
@@ -17,15 +17,13 @@
 
 -type subscription() :: #subscription{}.
 
-start_link() ->
-    gen_event:start_link().
-
 subscribe(EventMgrPid, EventCategory, Pid) ->
     gen_event:call(EventMgrPid, ?MODULE, {subscribe, EventCategory, Pid}).
 
-membership(EventMgrPid, Event) ->
-    gen_event:notify(EventMgrPid, {membership, Event}).
-
+init([Pid]) ->
+    MRef = erlang:monitor(process, Pid),
+    M = #subscription{pid=Pid, event_category=membership, mref=MRef},
+    {ok, #state{subscriptions=[M]}};
 init([]) ->
     {ok, #state{subscriptions=[]}}.
 

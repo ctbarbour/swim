@@ -23,9 +23,6 @@
 	  events = [] :: list({member_status(), member(), incarnation(), transmissions()})
 	 }).
 
-publish(_Name, _Event) ->
-    ok.
-
 membership_v2_local_member_test() ->
     {ok, Membership} = swim_membership:start_link(test, ?LOCAL_MEMBER, []),
     ?assertMatch(?LOCAL_MEMBER, swim_membership:local_member(Membership)).
@@ -223,10 +220,9 @@ prop_membership_v2() ->
 		   {ok, Pid} = ?SUT:start_link(sut, ?LOCAL_MEMBER,
 					       [{suspicion_factor, 1},
 						{protocol_period, 1}]),
-		   {H, S, R} = run_commands(?MODULE, Cmds, [{sut, Pid}]),
+		   {_H, _S, R} = run_commands(?MODULE, Cmds, [{sut, Pid}]),
 		   ok = gen_event:stop(EventMgrPid),
 		   ?WHENFAIL(
-		      io:format("History: ~p\nState: ~p\nResult: ~p\n",
-				[H, S, R]),
+		      io:format("Result: ~p\n", [R]),
 		      aggregate(command_names(Cmds), R =:= ok))
 	       end)).

@@ -5,15 +5,12 @@
 -include("swim.hrl").
 
 -record(state, {
-	  name                        :: atom(),
 	  local_member                :: member(),
+	  event_mgr_pid               :: pid() | module(),
 	  incarnation        = 0      :: non_neg_integer(),
 	  members            = #{}    :: maps:map(member(), member_state()),
 	  suspicion_factor   = 5      :: pos_integer(),
-	  protocol_period    = 1000   :: pos_integer(),
-	  membership_events  = []     :: [{member(), non_neg_integer(), binary()}],
-	  retransmit_factor  = 5      :: pos_integer(),
-	  publish = {swim_gossip_events, membership} :: {module(), atom()}
+	  protocol_period    = 1000   :: pos_integer()
 	 }).
 
 -record(member_state, {
@@ -22,27 +19,18 @@
 	  last_modified         :: integer()
 	 }).
 
--record(progress, {
-	  size_remaining :: pos_integer(),
-	  broadcasts = [] :: [{membership, binary()}],
-	  max_transmissions :: non_neg_integer()
-	 }).
-
 -type member_state() :: #member_state{}.
 
 -export([start_link/3, alive/3, suspect/3, faulty/3, members/1,
-	 events/1, events/2, local_member/1, set_status/3]).
+	 local_member/1, set_status/3, num_members/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
 
+num_members(Pid) ->
+    gen_server:call(Pid, num_members).
+
 local_member(Pid) ->
     gen_server:call(Pid, local).
-
-events(Pid) ->
-    events(Pid, swim_messages:event_size_limit()).
-
-events(Pid, MaxSize) ->
-    gen_server:call(Pid, {events, MaxSize}).
 
 set_status(Pid, Member, Status) ->
     gen_server:cast(Pid, {set_status, Member, Status}).
@@ -59,8 +47,8 @@ faulty(Pid, Member, Incarnation) ->
 members(Pid) ->
     gen_server:call(Pid, members).
 
-start_link(Name, LocalMember, Opts) ->
-    gen_server:start_link(?MODULE, [Name, LocalMember, Opts], []).
+start_link(LocalMember, EventMgrPid, Opts) ->
+    gen_server:start_link(?MODULE, [LocalMember, EventMgrPid, Opts], []).
 
 handle_opts([], State) ->
     State;
@@ -68,10 +56,6 @@ handle_opts([{suspicion_factor, Val} | Rest], State) ->
     handle_opts(Rest, State#state{suspicion_factor=Val});
 handle_opts([{protocol_period, Val} | Rest], State) ->
     handle_opts(Rest, State#state{protocol_period=Val});
-handle_opts([{retransmit_factor, Val} | Rest], State) ->
-    handle_opts(Rest, State#state{retransmit_factor=Val});
-handle_opts([{publish, Val} | Rest], State) ->
-    handle_opts(Rest, State#state{publish=Val});
 handle_opts([{seeds, Seeds} | Rest], State) ->
     #state{members=Members} = State,
     NewMembers = lists:foldl(
@@ -85,22 +69,16 @@ handle_opts([{seeds, Seeds} | Rest], State) ->
 handle_opts([_ | Rest], State) ->
     handle_opts(Rest, State).
 
-init([Name, LocalMember, Opts]) ->
-    State = handle_opts(Opts, #state{name=Name, local_member=LocalMember}),
+init([LocalMember, EventMgrPid, Opts]) ->
+    State = handle_opts(Opts, #state{local_member=LocalMember,
+				     event_mgr_pid=EventMgrPid}),
     {ok, State}.
 
+handle_call(num_members, _From, State) ->
+    #state{members=Members} = State,
+    {reply, maps:size(Members) + 1, State};
 handle_call(local, _From, State) ->
     {reply, State#state.local_member, State};
-handle_call({events, MaxSize}, _From, State) ->
-    #state{retransmit_factor=RetransmitFactor,
-	   membership_events=Events,
-	   members=Members} = State,
-    NumMembers = maps:size(Members),
-    MaxTransmissions = round(RetransmitFactor * math:log(NumMembers + 1)),
-    Progress = #progress{max_transmissions=MaxTransmissions,
-			 size_remaining=MaxSize},
-    {Broadcasts, Remaining} = dequeue(Progress, Events),
-    {reply, Broadcasts, State#state{membership_events=Remaining}};
 handle_call(members, _From, State) ->
     #state{members=Members} = State,
     M = maps:fold(
@@ -117,8 +95,7 @@ handle_call({alive, Member, Incarnation}, _From, #state{local_member=Member} = S
 	false ->
 	    {Events, NewState} = refute(Incarnation, State),
 	    ok = publish_events(Events, State),
-	    EnqueuedState = enqueue(Events, NewState),
-	    {reply, Events, EnqueuedState}
+	    {reply, Events, NewState}
     end;
 handle_call({alive, Member, Incarnation}, _From, State) ->
     #state{members=Members} = State,
@@ -144,10 +121,10 @@ handle_call({alive, Member, Incarnation}, _From, State) ->
 		{[{alive, Member, Incarnation}], Ms}
 	end,
     ok = publish_events(Events, State),
-    {reply, Events, enqueue(Events, State#state{members=NewMembers})};
+    {reply, Events, State#state{members=NewMembers}};
 handle_call({suspect, Member, Incarnation}, _From, #state{local_member=Member} = State) ->
     {Events, NewState} = refute(Incarnation, State),
-    {reply, Events, enqueue(Events, NewState)};
+    {reply, Events, NewState};
 handle_call({suspect, Member, Incarnation}, _From, State) ->
     #state{members=Members} = State,
     {Events, NewMembers} =
@@ -176,10 +153,10 @@ handle_call({suspect, Member, Incarnation}, _From, State) ->
 	    error ->
 		{[], Members}
 	end,
-    {reply, Events, enqueue(Events, State#state{members=NewMembers})};
+    {reply, Events, State#state{members=NewMembers}};
 handle_call({faulty, Member, Incarnation}, _From, #state{local_member=Member} = State) ->
     {Events, NewState} = refute(Incarnation, State),
-    {reply, ok, enqueue(Events, NewState)};
+    {reply, Events, NewState};
 handle_call({faulty, Member, Incarnation}, _From, State) ->
     #state{members=Members} = State,
     {Events, NewMembers} =
@@ -196,15 +173,14 @@ handle_call({faulty, Member, Incarnation}, _From, State) ->
 	    error ->
 		{[], Members}
 	end,
-    NewState = enqueue(Events, State#state{members=NewMembers}),
     ok = publish_events(Events, State),
-    {reply, Events, NewState};
+    {reply, Events, State#state{members=NewMembers}};
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
 handle_cast({set_status, Member, Status}, State) ->
     #state{members=Members} = State,
-    {Events, NewMembers} =
+    {_Events, NewMembers} =
 	case maps:find(Member, Members) of
 	    {ok, MemberState} ->
 		NewMemberState = MemberState#member_state{status=Status,
@@ -220,8 +196,7 @@ handle_cast({set_status, Member, Status}, State) ->
 	    error ->
 		{[], Members}
 	end,
-    NewState = enqueue(Events, State#state{members=NewMembers}),
-    {noreply, NewState};
+    {noreply, State#state{members=NewMembers}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -240,9 +215,8 @@ handle_info({suspect_timeout, Member, SuspectedAt}, State) ->
 	    error ->
 		{[], Members}
 	end,
-    NewState = enqueue(Events, State#state{members=NewMembers}),
     ok = publish_events(Events, State),
-    {noreply, NewState};
+    {noreply, State#state{members=NewMembers}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -272,49 +246,7 @@ refute(Incarnation, #state{incarnation=CurrentIncarnation} = State)
     #state{local_member=LocalMember} = State,
     {[{alive, LocalMember, CurrentIncarnation}], State}.
 
-dequeue(Progress, Events) ->
-    dequeue(Progress, lists:keysort(2, Events), []).
-
-dequeue(Progress, [], Remaining) ->
-    #progress{broadcasts=Broadcasts} = Progress,
-    {Broadcasts, Remaining};
-dequeue(Progress, [NextBroadcast | Rest] = L, Remaining) ->
-    #progress{size_remaining=SizeRemaining, broadcasts=Broadcasts,
-	      max_transmissions=MaxTransmissions} = Progress,
-    {Member, Transmissions, Msg} = NextBroadcast,
-    case SizeRemaining - 12 of
-	NewSize when NewSize > 0 ->
-	    case Transmissions + 1 of
-		T when T >= MaxTransmissions ->
-		    dequeue(Progress#progress{size_remaining=NewSize,
-					      broadcasts=[{membership, Msg} | Broadcasts]},
-			    Rest, Remaining);
-		T ->
-		    dequeue(Progress#progress{size_remaining=NewSize,
-					      broadcasts=[{membership, Msg} | Broadcasts]},
-			    Rest, [{Member, T, Msg} | Remaining])
-	    end;
-	NewSize when NewSize =< 0 ->
-	    {Broadcasts, lists:flatten([L | Remaining])}
-    end.
-
-enqueue(Events, State) ->
-    #state{membership_events=MembershipEvents} = State,
-    NewMembershipEvents = lists:foldl(fun do_enqueue/2, MembershipEvents, Events),
-    State#state{membership_events=NewMembershipEvents}.
-
-do_enqueue({_Status, Member, _Inc} = Event, KnownEvents) ->
-    FilteredEvents = lists:filter(fun({M, _, _I}) ->
-					M =/= Member
-				end, KnownEvents),
-    [{Member, 0, Event} | FilteredEvents].
-
--ifdef(TEST).
-publish_events(_, _) ->
-    ok.
--else.
 publish_events(Events, State) ->
-    #state{name=Name, publish={M, F}} = State,
-    [erlang:apply(M, F, [Name, Event]) || Event <- Events],
+    #state{event_mgr_pid=EventMgrPid} = State,
+    _ = [swim_broadcasts:membership(EventMgrPid, Event) || Event <- Events],
     ok.
--endif.
