@@ -10,9 +10,9 @@
 
 -record(state, {
 	  owner                  :: pid(),
-	  protocol_period = 3000 :: pos_integer(),
+	  protocol_period = 200  :: pos_integer(),
 	  ack_proxies     = 3    :: pos_integer(),
-	  ack_timeout     = 750  :: pos_integer(),
+	  ack_timeout     = 65   :: pos_integer(),
 	  current_ping           :: ping(),
 	  local_member           :: member(),
 	  proxy_pings     = []   :: [ping()],

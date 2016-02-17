@@ -11,7 +11,7 @@
 -type member_state() :: {member_status(), member(), incarnation()}.
 
 -record(state, {
-	  retransmit_factor = 5  :: pos_integer(),
+	  retransmit_factor = 4  :: pos_integer(),
 	  membership_events = [] :: [{non_neg_integer(), member_state()}],
 	  user_events       = [] :: [{non_neg_integer(), binary()}]
 	 }).
@@ -36,7 +36,7 @@ dequeue(EventMgrPid, NumMembers, MaxSize) ->
     gen_event:call(EventMgrPid, ?MODULE, {dequeue, MaxSize, NumMembers}).
 
 init([]) ->
-    init([5]);
+    init([4]);
 init([RetransmitFactor]) ->
     {ok, #state{retransmit_factor=RetransmitFactor}}.
 
