@@ -61,7 +61,7 @@ handle_call({dequeue, MaxSize, NumMembers}, State) ->
     {_, UBroadcast, UKeep} = do_dequeue(SizeLeft, MaxTransmissions,
 					[{T, {user, UB}} || {T, UB} <- UEvents],
 					MBroadcast, []),
-    Broadcast = list_to_binary(UBroadcast),
+    Broadcast = lists:foldl(fun(B, Acc) -> << B/binary, Acc/binary>> end, <<>>, UBroadcast),
     {ok, Broadcast, State#state{membership_events=MKeep, user_events=UKeep}};
 handle_call(_, State) ->
     {ok, State}.
@@ -79,21 +79,21 @@ do_dequeue(MaxSize, MaxTransmissions, Events) ->
     SortedEvents = lists:keysort(1, Events),
     do_dequeue(MaxSize, MaxTransmissions, SortedEvents, [], []).
 
-do_dequeue(MaxSize, _, Events, Broadcast, Keep)
-  when MaxSize =< 0 ->
-    {0, Broadcast, lists:flatten([Events | Keep])};
 do_dequeue(MaxSize, _MaxTransmissions, [], Broadcast, Keep) ->
     {MaxSize, Broadcast, Keep};
-do_dequeue(MaxSize, MaxTransmissions, [NextEvent | Events], Broadcast, Keep)
-  when MaxSize > 0 ->
+do_dequeue(MaxSize, MaxTransmissions, [NextEvent | Events] = E, Broadcast, Keep) ->
     {_Transmissions, Msg} = NextEvent,
     Wire = swim_messages:encode_event(Msg),
-    NewSize = MaxSize - size(Wire),
-    NewBroadcast = [Wire | Broadcast],
-    do_dequeue(NewSize, MaxTransmissions, Events, NewBroadcast,
-	       maybe_keep(MaxTransmissions, NextEvent, Keep)).
+    case MaxSize - size(Wire) of
+	NewSize when NewSize >= 0 ->
+	    NewBroadcast = [Wire | Broadcast],
+	    do_dequeue(NewSize, MaxTransmissions, Events, NewBroadcast,
+		       maybe_keep(MaxTransmissions, NextEvent, Keep));
+	NewSize when NewSize < 0 ->
+	    {0, Broadcast, lists:flatten([E | Keep])}
+    end.
 
-maybe_keep(MaxTransmissions, {Transmissions, _Msg}, Keep)
+maybe_keep(MaxTransmissions, {Transmissions, {_, _Msg}}, Keep)
   when Transmissions + 1 >= MaxTransmissions ->
     Keep;
 maybe_keep(MaxTransmissions, {Transmissions, {_, Msg}}, Keep)

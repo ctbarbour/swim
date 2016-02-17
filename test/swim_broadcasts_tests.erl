@@ -62,11 +62,11 @@ next_state(S, _V, {call, _Mod, dequeue, [_, NumMembers]}) ->
     MaxTransmissions = swim_broadcasts:max_transmissions(NumMembers, RetransmitFactor),
     NewEvents = lists:filtermap(
 		  fun({T, E}) ->
-			  case MaxTransmissions - T of
-			      R when R =< 0 ->
+			  case T + 1 of
+			      R when R >= MaxTransmissions ->
 				  false;
-			      R when R > 0 ->
-				  {true, {T + 1, E}}
+			      R when R < MaxTransmissions ->
+				  {true, {R, E}}
 			  end
 		  end, KnownEvents),
     S#state{events=NewEvents};
@@ -79,7 +79,13 @@ postcondition(S, {call, _Mod, dequeue, _Args}, Broadcasts) ->
     #state{events=KnownEvents} = S,
     D = [B || {membership, B} <- swim_messages:decode_events(Broadcasts)],
     K = [E || {_T, E} <- KnownEvents],
-    ordsets:is_subset(ordsets:from_list(D), ordsets:from_list(K)).
+    case {ordsets:is_subset(ordsets:from_list(D), ordsets:from_list(K)),
+	  size(Broadcasts) =< swim_messages:event_size_limit()} of
+	{true, true} ->
+	    true;
+	_ ->
+	    false
+    end.
 
 prop_swim_broadcasts() ->
     ?FORALL(Cmds, commands(?MODULE),
