@@ -90,7 +90,7 @@ do_dequeue(MaxSize, MaxTransmissions, [NextEvent | Events] = E, Broadcast, Keep)
 	    do_dequeue(NewSize, MaxTransmissions, Events, NewBroadcast,
 		       maybe_keep(MaxTransmissions, NextEvent, Keep));
 	NewSize when NewSize < 0 ->
-	    {0, Broadcast, lists:flatten([E | Keep])}
+	    {0, Broadcast, lists:flatten([[K || {_, K} <- E] | Keep])}
     end.
 
 maybe_keep(MaxTransmissions, {Transmissions, {_, _Msg}}, Keep)
