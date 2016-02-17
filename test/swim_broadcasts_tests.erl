@@ -94,9 +94,9 @@ prop_swim_broadcasts() ->
 		   {ok, EventMgrPid} = gen_event:start_link(),
 		   ok = gen_event:add_sup_handler(EventMgrPid, swim_broadcasts,
 						  [?RETRANSMIT_FACTOR]),
-		   {_H, _S, R} = run_commands(?MODULE, Cmds, [{sut, EventMgrPid}]),
+		   {H, S, R} = run_commands(?MODULE, Cmds, [{sut, EventMgrPid}]),
 		   ok = gen_event:stop(EventMgrPid),
 		   ?WHENFAIL(
-		      io:format("Result: ~p\n", [R]),
+		      io:format("History: ~p~nState: ~p~nResult: ~p~n", [R]),
 		      aggregate(command_names(Cmds), R =:= ok))
 	       end)).

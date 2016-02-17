@@ -1,102 +1,108 @@
 
 
 # Module swim #
-* [Description](#description)
 * [Function Index](#index)
 * [Function Details](#functions)
-
-This is the main swim module.
-
-__Version:__ Jul 26 2015 10:56:59
 
 <a name="index"></a>
 
 ## Function Index ##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#members-1">members/1</a></td><td>Returns the known members for a given gossip peer.</td></tr><tr><td valign="top"><a href="#publish-2">publish/2</a></td><td>Publishes a term to the rest of the gossip peers.</td></tr><tr><td valign="top"><a href="#rotate_keys-2">rotate_keys/2</a></td><td>Rotate the encryption keys for a local gossip peer.</td></tr><tr><td valign="top"><a href="#start_gossip-4">start_gossip/4</a></td><td>Starts a gossip peer.</td></tr><tr><td valign="top"><a href="#stop_gossip-1">stop_gossip/1</a></td><td>Stops a running gossip peer.</td></tr><tr><td valign="top"><a href="#subscribe-2">subscribe/2</a></td><td>Subscribes to events on a given gossip group.</td></tr><tr><td valign="top"><a href="#unsubscribe-2">unsubscribe/2</a></td><td>Unsubscribe from an event category.</td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#child_spec-4">child_spec/4</a></td><td></td></tr><tr><td valign="top"><a href="#code_change-3">code_change/3</a></td><td></td></tr><tr><td valign="top"><a href="#handle_call-3">handle_call/3</a></td><td></td></tr><tr><td valign="top"><a href="#handle_cast-2">handle_cast/2</a></td><td></td></tr><tr><td valign="top"><a href="#handle_info-2">handle_info/2</a></td><td></td></tr><tr><td valign="top"><a href="#init-1">init/1</a></td><td></td></tr><tr><td valign="top"><a href="#local_member-1">local_member/1</a></td><td></td></tr><tr><td valign="top"><a href="#members-1">members/1</a></td><td></td></tr><tr><td valign="top"><a href="#publish-2">publish/2</a></td><td></td></tr><tr><td valign="top"><a href="#rotate_keys-2">rotate_keys/2</a></td><td></td></tr><tr><td valign="top"><a href="#start_link-3">start_link/3</a></td><td></td></tr><tr><td valign="top"><a href="#start_link-4">start_link/4</a></td><td></td></tr><tr><td valign="top"><a href="#stop-1">stop/1</a></td><td></td></tr><tr><td valign="top"><a href="#subscribe-1">subscribe/1</a></td><td></td></tr><tr><td valign="top"><a href="#terminate-2">terminate/2</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
 
 ## Function Details ##
 
+<a name="child_spec-4"></a>
+
+### child_spec/4 ###
+
+`child_spec(Name, LocalMember, Keys, Opts) -> any()`
+
+<a name="code_change-3"></a>
+
+### code_change/3 ###
+
+`code_change(OldVsn, State, Extra) -> any()`
+
+<a name="handle_call-3"></a>
+
+### handle_call/3 ###
+
+`handle_call(Msg, From, State) -> any()`
+
+<a name="handle_cast-2"></a>
+
+### handle_cast/2 ###
+
+`handle_cast(Msg, State) -> any()`
+
+<a name="handle_info-2"></a>
+
+### handle_info/2 ###
+
+`handle_info(Info, State) -> any()`
+
+<a name="init-1"></a>
+
+### init/1 ###
+
+`init(X1) -> any()`
+
+<a name="local_member-1"></a>
+
+### local_member/1 ###
+
+`local_member(Pid) -> any()`
+
 <a name="members-1"></a>
 
 ### members/1 ###
 
-<pre><code>
-members(Name::atom()) -&gt; [<a href="#type-member">member()</a>]
-</code></pre>
-<br />
-
-Returns the known members for a given gossip peer.
+`members(Pid) -> any()`
 
 <a name="publish-2"></a>
 
 ### publish/2 ###
 
-<pre><code>
-publish(Name::atom(), Event::term()) -&gt; ok
-</code></pre>
-<br />
-
-Publishes a term to the rest of the gossip peers.
+`publish(Pid, Event) -> any()`
 
 <a name="rotate_keys-2"></a>
 
 ### rotate_keys/2 ###
 
-<pre><code>
-rotate_keys(Name::atom(), Key::<a href="#type-key">key()</a>) -&gt; ok
-</code></pre>
-<br />
+`rotate_keys(Pid, NewKey) -> any()`
 
-Rotate the encryption keys for a local gossip peer.
+<a name="start_link-3"></a>
 
-<a name="start_gossip-4"></a>
+### start_link/3 ###
 
-### start_gossip/4 ###
+`start_link(LocalMember, Keys, Opts) -> any()`
 
-<pre><code>
-start_gossip(Name::atom(), ListenIp::<a href="inet.md#type-ip_address">inet:ip_address()</a>, ListenPort::<a href="inet.md#type-port_number">inet:port_number()</a>, Opts::[<a href="swim_gossip.md#type-gossip_opt">swim_gossip:gossip_opt()</a>]) -&gt; {ok, pid()}
-</code></pre>
-<br />
+<a name="start_link-4"></a>
 
-Starts a gossip peer.
+### start_link/4 ###
 
-<a name="stop_gossip-1"></a>
+`start_link(Name, LocalMember, Keys, Opts) -> any()`
 
-### stop_gossip/1 ###
+<a name="stop-1"></a>
 
-<pre><code>
-stop_gossip(Name::atom()) -&gt; ok
-</code></pre>
-<br />
+### stop/1 ###
 
-Stops a running gossip peer.
+`stop(Pid) -> any()`
 
-<a name="subscribe-2"></a>
+<a name="subscribe-1"></a>
 
-### subscribe/2 ###
+### subscribe/1 ###
 
-<pre><code>
-subscribe(Name::atom(), EventCategory::<a href="#type-event_category">event_category()</a>) -&gt; ok
-</code></pre>
-<br />
+`subscribe(Pid) -> any()`
 
-Subscribes to events on a given gossip group.
+<a name="terminate-2"></a>
 
-A subscribing process will receive messages based on the event-category.
+### terminate/2 ###
 
-<a name="unsubscribe-2"></a>
-
-### unsubscribe/2 ###
-
-<pre><code>
-unsubscribe(Name::atom(), EventCategory::<a href="#type-event_category">event_category()</a>) -&gt; ok
-</code></pre>
-<br />
-
-Unsubscribe from an event category.
+`terminate(Reason, State) -> any()`
 

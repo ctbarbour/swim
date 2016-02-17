@@ -1,4 +1,4 @@
 %% encoding: UTF-8
 {application,swim}.
-{modules,[swim,swim_broadcasts,swim_gossip,swim_gossip_events,swim_membership,
-          swim_messages,swim_vault]}.
+{modules,[swim,swim_broadcasts,swim_membership,swim_messages,
+          swim_subscriptions,swim_transport]}.
