@@ -9,6 +9,13 @@
     crypto
    ]},
   {env,[]},
-  {modules, []},
+  {modules, [
+    swim,
+    swim_broadcasts,
+    swim_membership,
+    swim_messages,
+    swim_subscriptions,
+    swim_transport
+  ]},
   {licenses, ["Apache 2.0"]}
  ]}.

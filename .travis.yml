@@ -1,4 +1,4 @@
 language: erlang
 otp_release:
-  - 18.0
+  - 18.2.2
 script: ./rebar3 do xref, dialyzer, eunit
