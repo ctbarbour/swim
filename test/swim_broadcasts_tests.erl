@@ -97,6 +97,6 @@ prop_swim_broadcasts() ->
 		   {H, S, R} = run_commands(?MODULE, Cmds, [{sut, EventMgrPid}]),
 		   ok = gen_event:stop(EventMgrPid),
 		   ?WHENFAIL(
-		      io:format("History: ~p~nState: ~p~nResult: ~p~n", [R]),
+		      io:format("History: ~p~nState: ~p~nResult: ~p~n", [H, S, R]),
 		      aggregate(command_names(Cmds), R =:= ok))
 	       end)).
