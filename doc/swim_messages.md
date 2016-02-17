@@ -10,7 +10,7 @@ messages as well as encrypting and decrypting the message payloads.
 
 Copyright (c) 2015
 
-__Version:__ Feb 17 2016 21:39:26
+__Version:__ Feb 17 2016 23:30:45
 
 <a name="description"></a>
 
