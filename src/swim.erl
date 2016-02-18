@@ -33,11 +33,19 @@
 	  sent :: pos_integer()
 	 }).
 
+-type swim_opt() :: {protocol_period, pos_integer()} |
+		    {ack_proxies, pos_integer()} |
+		    {ack_timeout, pos_integer()}.
+
 -type ping() :: #ping{}.
 
+-spec start_link(atom(), member(), [key()], [swim_opt() | swim_membership:swim_membership_opt()])
+		-> {ok, pid()}.
 start_link(Name, LocalMember, Keys, Opts) ->
     gen_server:start_link({local, Name}, ?MODULE, [self(), LocalMember, Keys, Opts], []).
 
+-spec start_link(member(), [key()], [swim_opt() | swim_membership:swim_membership_opt()])
+		-> {ok, pid()}.
 start_link(LocalMember, Keys, Opts) ->
     gen_server:start_link(?MODULE, [self(), LocalMember, Keys, Opts], []).
 
@@ -72,9 +80,11 @@ start_event_handlers(Owner) ->
     ok = gen_event:add_sup_handler(SwimEvents, swim_broadcasts, []),
     {ok, SwimEvents}.
 
+%% @private
 init([Owner, LocalMember, Keys, Opts]) ->
     {ok, SwimEvents} = start_event_handlers(Owner),
-    {ok, Membership} = swim_membership:start_link(LocalMember, SwimEvents, Opts),
+    {ok, Membership} = swim_membership:start_link(LocalMember, SwimEvents,
+						 swim_membership:opts(Opts)),
     {ok, Transport} = start_transport(LocalMember, Keys),
     State = init(Opts, #state{local_member=LocalMember, owner=Owner,
 			      broadcasts=SwimEvents,
@@ -96,6 +106,7 @@ init([{ack_timeout, Val} | Rest], State)
 init([_ | Rest], State) ->
     init(Rest, State).
 
+%% @private
 handle_call({rotate_keys, NewKey}, _From, State) ->
     #state{transport=Transport} = State,
     ok = swim_transport:rotate_keys(Transport, NewKey),
@@ -113,6 +124,7 @@ handle_call(members, _From, State) ->
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
+%% @private
 handle_cast({subscribe, Subscriber}, State) ->
     #state{broadcasts=EventMgrPid} = State,
     ok = swim_subscriptions:subscribe(EventMgrPid, user, Subscriber),
@@ -125,6 +137,7 @@ handle_cast({publish, Event}, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
+%% @private
 handle_info(protocol_period, State) ->
     NewState = handle_protocol_period(State),
     ok = schedule_next_protocol_period(NewState),
@@ -148,9 +161,11 @@ handle_info(Info, State) ->
     ok = error_logger:info_msg("Received unmatched info: ~p", [Info]),
     {noreply, State}.
 
+%% @private
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+%% @private
 terminate(_Reason, _State) ->
     ok.
 

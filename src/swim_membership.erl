@@ -37,7 +37,7 @@
 -include("swim.hrl").
 
 -export([start_link/3, alive/3, suspect/3, faulty/3, members/1,
-	 local_member/1, set_status/3, num_members/1]).
+	 local_member/1, set_status/3, num_members/1, opts/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
 	 terminate/2]).
 
@@ -62,6 +62,22 @@
 -type member_state() :: #member_state{}.
 
 -export_type([swim_membership_opt/0]).
+
+-spec opts(list()) -> [swim_membership_opt()].
+opts(Opts) ->
+    opts(Opts, []).
+
+-spec opts(list(), list()) -> [swim_membership_opt()].
+opts([], Opts) ->
+    Opts;
+opts([{seeds, Seeds} | Rest], Opts) ->
+    opts(Rest, [{seeds, Seeds} | Opts]);
+opts([{suspicion_factor, Val} | Rest], Opts) ->
+    opts(Rest, [{suspicion_factor, Val} | Opts]);
+opts([{protocol_period, Val} | Rest], Opts) ->
+    opts(Rest, [{protocol_period, Val} | Opts]);
+opts([_ | Rest], Opts) ->
+    opts(Rest, Opts).
 
 %% @doc The number of known members in the gossip group, including the local member
 -spec num_members(pid()) -> pos_integer().
