@@ -4,13 +4,15 @@
 
 Copyright (c) 2015 Tucker Barbour
 
-__Version:__ Feb 18 2016 00:10:58
+__Version:__ Feb 18 2016 10:13:03
 
 __Authors:__ Tucker Barbour ([`barbct5@gmail.com`](mailto:barbct5@gmail.com)).
 
 __References__* http://www.cs.cornell.edu/~asdas/research/dsn02-SWIM.pdf
 
 [![Build Status](https://travis-ci.org/barbct5/swim.svg)](https://travis-ci.org/barbct5/swim)
+
+(__WARNING:__ This project is untested in production environments. Do not use in production.)
 
 ### Intro
 

@@ -12,7 +12,7 @@ described in the SWIM Paper.
 
 Copyright (c) 2015
 
-__Version:__ Feb 18 2016 00:10:58
+__Version:__ Feb 18 2016 10:13:03
 
 <a name="description"></a>
 
@@ -45,7 +45,7 @@ swim_membership_opt() = {seeds, [<a href="#type-member">member()</a>]} | {suspic
 ## Function Index ##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#alive-3">alive/3</a></td><td>Set the member status to alive.</td></tr><tr><td valign="top"><a href="#faulty-3">faulty/3</a></td><td>Remove the member from the group.</td></tr><tr><td valign="top"><a href="#local_member-1">local_member/1</a></td><td>The identifier for the local member.</td></tr><tr><td valign="top"><a href="#members-1">members/1</a></td><td>A list of known members and their status.</td></tr><tr><td valign="top"><a href="#num_members-1">num_members/1</a></td><td>The number of known members in the gossip group, including the local member.</td></tr><tr><td valign="top"><a href="#set_status-3">set_status/3</a></td><td>Forcibly set the status of a member.</td></tr><tr><td valign="top"><a href="#start_link-3">start_link/3</a></td><td></td></tr><tr><td valign="top"><a href="#suspect-3">suspect/3</a></td><td>Set the member status to suspect.</td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#alive-3">alive/3</a></td><td>Set the member status to alive.</td></tr><tr><td valign="top"><a href="#faulty-3">faulty/3</a></td><td>Remove the member from the group.</td></tr><tr><td valign="top"><a href="#local_member-1">local_member/1</a></td><td>The identifier for the local member.</td></tr><tr><td valign="top"><a href="#members-1">members/1</a></td><td>A list of known members and their status.</td></tr><tr><td valign="top"><a href="#num_members-1">num_members/1</a></td><td>The number of known members in the gossip group, including the local member.</td></tr><tr><td valign="top"><a href="#opts-1">opts/1</a></td><td></td></tr><tr><td valign="top"><a href="#set_status-3">set_status/3</a></td><td>Forcibly set the status of a member.</td></tr><tr><td valign="top"><a href="#start_link-3">start_link/3</a></td><td></td></tr><tr><td valign="top"><a href="#suspect-3">suspect/3</a></td><td>Set the member status to suspect.</td></tr></table>
 
 
 <a name="functions"></a>
@@ -115,6 +115,15 @@ num_members(Pid::pid()) -&gt; pos_integer()
 <br />
 
 The number of known members in the gossip group, including the local member
+
+<a name="opts-1"></a>
+
+### opts/1 ###
+
+<pre><code>
+opts(Opts::list()) -&gt; [<a href="#type-swim_membership_opt">swim_membership_opt()</a>]
+</code></pre>
+<br />
 
 <a name="set_status-3"></a>
 

@@ -8,6 +8,9 @@
 [![Build Status](https://travis-ci.org/barbct5/swim.svg)](https://travis-ci.org/barbct5/swim)
 
 
+(__WARNING:__ This project is untested in production environments. Do not use in production.)
+
+
 ### Intro
 
 This Application is an Erlang implementation of the
