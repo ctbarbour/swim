@@ -3,4 +3,5 @@ otp_release:
   - 18.2.1
 script: ./rebar3 do xref, dialyzer, eunit
 cache:
-  - ./_build/default/*.plt
+  directories:
+    - ~/.cache/rebar3/
