@@ -32,8 +32,6 @@
 %%% @end
 -module(swim_membership).
 
--behavior(gen_server).
-
 -include("swim.hrl").
 
 -ifdef(TEST).
@@ -41,18 +39,19 @@
 -define(LOCAL_MEMBER, {{127,0,0,1}, 5000}).
 -endif.
 
--export([start_link/3, alive/3, suspect/3, faulty/3, members/1,
-         local_member/1, set_status/3, num_members/1, opts/1]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
-         terminate/2]).
+-export([alive/3]).
+-export([suspect/3]).
+-export([faulty/3]).
+-export([members/1]).
+-export([size/1]).
+-export([local_member/1]).
+-export([set_status/3]).
 
--record(state, {
+-record(membership, {
           local_member                :: member(),
-          event_mgr_pid               :: pid() | module(),
           incarnation        = 0      :: non_neg_integer(),
-          members            = #{}    :: maps:map(member(), member_state()),
-          suspicion_factor   = 5      :: pos_integer(),
-          protocol_period    = 1000   :: pos_integer()
+          members            = #{}    :: #{member() => member_state()},
+          suspicion_factor   = 5      :: pos_integer()
          }).
 
 -record(member_state, {
@@ -61,38 +60,26 @@
           last_modified         :: integer()
          }).
 
--type swim_membership_opt() :: {seeds, [member()]} |
-                               {suspicion_factor, pos_integer()} |
-                               {protocol_period, pos_integer()}.
 -type member_state() :: #member_state{}.
+-opaque membership()   :: #membership{}.
 
--export_type([swim_membership_opt/0]).
-
--spec opts(list()) -> [swim_membership_opt()].
-opts(Opts) ->
-    opts(Opts, []).
-
--spec opts(list(), list()) -> [swim_membership_opt()].
-opts([], Opts) ->
-    Opts;
-opts([{seeds, Seeds} | Rest], Opts) ->
-    opts(Rest, [{seeds, Seeds} | Opts]);
-opts([{suspicion_factor, Val} | Rest], Opts) ->
-    opts(Rest, [{suspicion_factor, Val} | Opts]);
-opts([{protocol_period, Val} | Rest], Opts) ->
-    opts(Rest, [{protocol_period, Val} | Opts]);
-opts([_ | Rest], Opts) ->
-    opts(Rest, Opts).
+-export_type([membership/0]).
 
 %% @doc The number of known members in the gossip group, including the local member
--spec num_members(pid()) -> pos_integer().
-num_members(Pid) ->
-    gen_server:call(Pid, num_members).
+-spec size(Membership) -> NumMembers when
+      Membership :: membership(),
+      NumMembers :: non_neg_integer().
+
+size(#membership{members = Members}) ->
+    maps:size(Members) + 1.
 
 %% @doc The identifier for the local member
--spec local_member(pid()) -> member().
-local_member(Pid) ->
-    gen_server:call(Pid, local).
+-spec local_member(Membership) -> Member when
+      Membership :: membership(),
+      Member     :: member().
+
+local_member(#membership{local_member = LocalMember}) ->
+    LocalMember.
 
 %% @doc Forcibly set the status of a member
 %%
@@ -111,10 +98,45 @@ set_status(Pid, Member, Status) ->
 %% greater than the current incarnation of the member, we update the incarnation
 %% of member and broadcast an event to group. Otherwise, we do nothing.
 %% @end
--spec alive(pid(), member(), incarnation())
-           -> [{member_status(), member(), incarnation()}].
-alive(Pid, Member, Incarnation) ->
-    gen_server:call(Pid, {alive, Member, Incarnation}).
+-spec alive(Member, Incarnation, Membership0) -> Membership when
+      Member      :: member(),
+      Incarnation :: incarnation(),
+      Membership0 :: membership(),
+      Membership  :: membership().
+
+alive(Member, Incarnation, Membership)
+  when Member =:= Membership#membership.local_member andalso
+       Incarnation =< Membership#membership.incarnation ->
+    Membership;
+alive(Member, Incarnation, Membership)
+  when Member =:= Membership#membership.local_member andalso
+       Incarnation > Membership#membership.incarnation ->
+    refute(Incarnation, Membership);
+alive(Member, Incarnation, Membership) ->
+    #membership{members = CurrentMembers} = Membership,
+    case maps:find(Member, CurrentMembers) of
+        {ok, #member_state{incarnation = CurrentIncarnation} = State0}
+          when Incarnation > CurrentIncarnation ->
+            State = State0#member_state{
+                      status        = alive,
+                      incarnation   = Incarnation,
+                      last_modified = time_compat:monotonic_time()
+                     },
+            NewMembers = maps:put(Member, State, CurrentMembers),
+            Events = [{alive, Member, Incarnation}],
+            {Events, Membership#membership{members = NewMembers}};
+        {ok, _State} ->
+            {[], Membership};
+        error ->
+            State = #member_state{
+                       status        = alive,
+                       incarnation   = Incarnation,
+                       last_modified = time_compat:monotonic_time()
+                      },
+            NewMembers = maps:put(Member, State, CurrentMembers),
+            Events = [{alive, Member, Incarnation}],
+            {Events, Membership#membership{members = NewMembers}}
+    end.
 
 %% @doc Set the member status to suspect
 %%
