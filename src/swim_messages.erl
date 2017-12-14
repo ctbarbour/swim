@@ -377,9 +377,17 @@ encode_event(Event) when is_binary(Event) ->
 %% of the protocol. The return value is an Erlang term of the message. If the
 %% version is not supported or the message is malformed, an exception is thrown.
 %% @end
--spec decode(Message::binary()) -> swim_message().
+-spec decode(Packet) -> Result when
+      Packet :: binary(),
+      Result :: swim_message() | error.
+
 decode(<<?VERSION_1/integer, Code/integer, Rest/binary>>) ->
-    decode(msg_type(Code), Rest).
+    try
+        decode(msg_type(Code), Rest)
+    catch
+        _ ->
+            error
+    end.
 
 -spec decode(ack | ping | ping_req | leave, binary()) -> swim_message().
 decode(ack, <<Seq:32/integer, MemberSize/integer, Member:MemberSize/binary,

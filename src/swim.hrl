@@ -19,7 +19,7 @@
 -type member_status()     :: alive | suspect | faulty.
 -type incarnation()       :: non_neg_integer().
 -type sequence()          :: non_neg_integer().
--type user_event()        :: {user, term()}.
+-type user_event()        :: {user, any()}.
 -type membership_event()  :: {membership, {member_status(), member(), incarnation()}}.
 -type swim_event()        :: user_event() | membership_event().
 -type swim_message()      :: {ack, sequence(), member(), [swim_event()]} |
@@ -28,3 +28,15 @@
                              {leave, sequence()}.
 -type key()               :: <<_:256>>.
 -type event_category()    :: user | membership.
+
+-record(ping, {
+          sequence    :: non_neg_integer(),
+          origin      :: member(),
+          terminal    :: member(),
+          incarnation :: incarnation(),
+          proxies     :: nonempty_list(member()),
+          ref         :: undefined | reference(),
+          tref        :: undefined | reference()
+         }).
+
+-type ping() :: #ping{}.
