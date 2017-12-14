@@ -8,3 +8,4 @@ log/
 TAGS
 erln8.config
 .DS_Store
+.rebar3
