@@ -1,5 +1,5 @@
 %%% ----------------------------------------------------------------------------
-%%% Copyright (c) 2015. All Rights Reserved.
+%%% Copyright (c) 2015-2017. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License,
 %%% Version 2.0 (the "License"); you may not use this file except in compliance
@@ -15,7 +15,7 @@
 %%% limitiations under the License.
 %%% ----------------------------------------------------------------------------
 
-%%% @copyright 2015
+%%% @copyright 2015-2017
 %%% @version {@version}
 
 %%% @doc This module is responsible for encoding and decoding SWIM protocol
@@ -64,19 +64,19 @@
 -module(swim_messages).
 
 -export([encode_ack/3,
-	 encode_ping/2,
-	 encode_ping_req/2,
-	 encode_leave/1,
-	 encode_event/1,
-	 encode_events/1,
-	 decode_events/1,
-	 decode_event/2,
-	 decode/1,
-	 encrypt/3,
-	 decrypt/3,
-	 encode_member/1,
-	 event_size_limit/0
-	]).
+         encode_ping/2,
+         encode_ping_req/2,
+         encode_leave/1,
+         encode_event/1,
+         encode_events/1,
+         decode_events/1,
+         decode_event/2,
+         decode/1,
+         encrypt/3,
+         decrypt/3,
+         encode_member/1,
+         event_size_limit/0
+        ]).
 
 -include("swim.hrl").
 
@@ -85,7 +85,7 @@
 
 -type msg_code()    ::  1 | 2 | 3 | 4 | 50 | 51 | 100 | 101 | 102.
 -type msg_type()    ::  ping | ack | ping_req | leave | membership | user | alive
-		      | suspect | faulty.
+                      | suspect | faulty.
 -type encoded_msg() ::  <<_:8, _:_*8>>.
 
 -spec msg_code(msg_type()) -> msg_code().
@@ -144,14 +144,14 @@ encrypt(Key, AAD, PlainText)
 %% must be identical to those provided here. Decrypt is not responsible for
 %% decoding the underlying Swim protocol message -- see {@link decode/1}.
 -spec decrypt(<<_:256>>, binary(), Payload::binary())
-	     -> binary() | {error, failed_verification}.
+             -> binary() | {error, failed_verification}.
 decrypt(Key, AAD, <<IV:16/binary, CipherTag:16/binary, CipherText/binary>>)
   when is_binary(Key), is_binary(AAD) ->
     case crypto:block_decrypt(aes_gcm, Key, IV, {AAD, CipherText, CipherTag}) of
-	error ->
-	    {error, failed_verification};
-	PlainText ->
-	    PlainText
+        error ->
+            {error, failed_verification};
+        PlainText ->
+            PlainText
     end.
 
 %% @doc Encodes an ACK message, piggybacking membership and user events.
@@ -185,13 +185,13 @@ decrypt(Key, AAD, <<IV:16/binary, CipherTag:16/binary, CipherText/binary>>)
 %% </dl>
 %% @end
 -spec encode_ack(sequence(), member(), [swim_event()] | binary())
-		-> binary() | no_return().
+                -> binary() | no_return().
 encode_ack(Seq, Target, Events)
   when is_binary(Events), size(Events) =< ?MAX_EVENT_SIZE ->
     Body = <<(msg_code(ack))/integer,
-	     Seq:32/integer,
-	     (encode_member(Target))/binary,
-	     Events/binary>>,
+             Seq:32/integer,
+             (encode_member(Target))/binary,
+             Events/binary>>,
     encode_envelope(Body);
 encode_ack(Seq, Target, Events) when is_list(Events) ->
     encode_ack(Seq, Target, encode_events(Events));
@@ -216,10 +216,10 @@ encode_ack(_Seq, _Target, _Events) ->
 %% @end
 -spec encode_ping(sequence(), [swim_event()] | binary()) -> binary() | no_return().
 encode_ping(Seq, Events)
- when is_binary(Events), size(Events) =< ?MAX_EVENT_SIZE ->
+  when is_binary(Events), size(Events) =< ?MAX_EVENT_SIZE ->
     Body = <<(msg_code(ping))/integer,
-	     Seq:32/integer,
-	     Events/binary>>,
+             Seq:32/integer,
+             Events/binary>>,
     encode_envelope(Body);
 encode_ping(Seq, Events) when is_list(Events) ->
     encode_ping(Seq, encode_events(Events));
@@ -253,8 +253,8 @@ encode_ping(_Seq, _Events) ->
 -spec encode_ping_req(sequence(), member()) -> binary().
 encode_ping_req(Seq, Target) ->
     Body = <<(msg_code(ping_req))/integer,
-	     Seq:32/integer,
-	     (encode_member(Target))/binary>>,
+             Seq:32/integer,
+             (encode_member(Target))/binary>>,
     encode_envelope(Body).
 
 %% @doc Encodes a LEAVE message.
@@ -306,7 +306,7 @@ encode_envelope(Body) when is_binary(Body) ->
 %% </dl>
 %% @end
 -spec encode_member(Member::{inet:ip_address(), inet:port_number()})
-		   -> <<_:48>> | <<_:96>>.
+                   -> <<_:48>> | <<_:96>>.
 encode_member({{A1, A2, A3, A4}, Port}) ->
     <<6/integer, A1/integer, A2/integer, A3/integer, A4/integer, Port:16/integer>>;
 encode_member({{A1, A2, A3, A4, A5, A6, A7, A8}, Port}) ->
@@ -362,8 +362,8 @@ encode_events(Events) ->
 -spec encode_event(Event::swim_event() | binary()) -> binary().
 encode_event({membership, {Status, Member, Inc}}) ->
     Bin = <<(msg_code(Status))/integer,
-	    (encode_member(Member))/binary,
-	    Inc:32/integer>>,
+            (encode_member(Member))/binary,
+            Inc:32/integer>>,
     <<(msg_code(membership))/integer, Bin/binary>>;
 encode_event({user, Term}) ->
     Bin = term_to_binary(Term),
@@ -383,7 +383,7 @@ decode(<<?VERSION_1/integer, Code/integer, Rest/binary>>) ->
 
 -spec decode(ack | ping | ping_req | leave, binary()) -> swim_message().
 decode(ack, <<Seq:32/integer, MemberSize/integer, Member:MemberSize/binary,
-	      Events/binary>>) ->
+              Events/binary>>) ->
     {ack, Seq, decode_member(Member), decode_events(Events)};
 decode(ping, <<Seq:32/integer, Events/binary>>) ->
     {ping, Seq, decode_events(Events)};
@@ -396,8 +396,8 @@ decode(leave, <<Seq:32/integer>>) ->
 decode_member(<<A1/integer, A2/integer, A3/integer, A4/integer, Port:16/integer>>) ->
     {{A1, A2, A3, A4}, Port};
 decode_member(<<A1:16/integer, A2:16/integer, A3:16/integer, A4:16/integer,
-		A5:16/integer, A6:16/integer, A7:16/integer, A8:16/integer,
-		Port:16/integer>>) ->
+                A5:16/integer, A6:16/integer, A7:16/integer, A8:16/integer,
+                Port:16/integer>>) ->
     {{A1, A2, A3, A4, A5, A6, A7, A8}, Port}.
 
 -spec decode_events(binary()) -> [swim_event()].
@@ -413,7 +413,7 @@ decode_events(<<Code/integer, Events/binary>>, Acc) ->
 
 -spec decode_event(membership | user, binary()) -> {swim_event(), binary()}.
 decode_event(membership, <<StatusCode/integer, MemberSize/integer,
-			   Member:MemberSize/binary, Inc:32/integer, Rest/binary>>) ->
+                           Member:MemberSize/binary, Inc:32/integer, Rest/binary>>) ->
     Event = {membership, {msg_type(StatusCode), decode_member(Member), Inc}},
     {Event, Rest};
 decode_event(user, <<Size:16/integer, Bin:Size/binary, Rest/binary>>) ->

@@ -1,51 +1,71 @@
+%%% ----------------------------------------------------------------------------
+%%% Copyright (c) 2015-2017 All Rights Reserved.
+%%%
+%%% Licensed under the Apache License,
+%%% Version 2.0 (the "License"); you may not use this file except in compliance
+%%% with the License.
+%%% You may obtain a copy of the License at
+%%%
+%%%     http://www.apache.org/licenses/LICENSE-2.0
+%%%
+%%% Unless required by applicable law or agreed to in writing, software
+%%% distributed under the License is distributed on an "AS IS" BASIS,
+%%% WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+%%% See the License for the specific language governing permissions and
+%%% limitiations under the License.
+%%% ----------------------------------------------------------------------------
+
+%%% @copyright 2015-2017
+%%% @version {@version}
+
 -module(swim).
 -behavior(gen_server).
 
 -include("swim.hrl").
 
 -export([start_link/3, start_link/4, members/1, publish/2, local_member/1,
-	 stop/1, rotate_keys/2, child_spec/4, subscribe/1]).
+         stop/1, rotate_keys/2, child_spec/4, subscribe/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, code_change/3,
-	 terminate/2]).
+         terminate/2]).
 
 -record(state, {
-	  owner                  :: pid(),
-	  protocol_period = 200  :: pos_integer(),
-	  ack_proxies     = 3    :: pos_integer(),
-	  ack_timeout     = 65   :: pos_integer(),
-	  current_ping           :: ping(),
-	  local_member           :: member(),
-	  proxy_pings     = []   :: [ping()],
-	  ping_targets    = []   :: [{member(), incarnation()}],
-	  sequence        = 0    :: non_neg_integer(),
-	  membership             :: pid(),
-	  transport              :: pid(),
-	  broadcasts             :: pid()
-	 }).
+          owner                  :: pid(),
+          protocol_period = 200  :: pos_integer(),
+          ack_proxies     = 3    :: pos_integer(),
+          ack_timeout     = 65   :: pos_integer(),
+          current_ping           :: undefined | ping(),
+          local_member           :: member(),
+          proxy_pings     = []   :: [ping()],
+          ping_targets    = []   :: [{member(), incarnation()}],
+          sequence        = 0    :: non_neg_integer(),
+          membership             :: pid(),
+          transport              :: pid(),
+          broadcasts             :: pid()
+         }).
 
 -record(ping, {
-	  sequence :: non_neg_integer(),
-	  origin :: member(),
-	  terminal :: member(),
-	  incarnation :: incarnation(),
-	  ref :: reference(),
-	  tref :: reference(),
-	  sent :: pos_integer()
-	 }).
+          sequence    :: undefined | non_neg_integer(),
+          origin      :: member(),
+          terminal    :: member(),
+          incarnation :: undefined | incarnation(),
+          ref         :: undefined | reference(),
+          tref        :: undefined | reference(),
+          sent        :: undefined | pos_integer()
+         }).
 
 -type swim_opt() :: {protocol_period, pos_integer()} |
-		    {ack_proxies, pos_integer()} |
-		    {ack_timeout, pos_integer()}.
+                    {ack_proxies, pos_integer()} |
+                    {ack_timeout, pos_integer()}.
 
 -type ping() :: #ping{}.
 
 -spec start_link(atom(), member(), [key()], [swim_opt() | swim_membership:swim_membership_opt()])
-		-> {ok, pid()}.
+                -> {ok, pid()}.
 start_link(Name, LocalMember, Keys, Opts) ->
     gen_server:start_link({local, Name}, ?MODULE, [self(), LocalMember, Keys, Opts], []).
 
 -spec start_link(member(), [key()], [swim_opt() | swim_membership:swim_membership_opt()])
-		-> {ok, pid()}.
+                -> {ok, pid()}.
 start_link(LocalMember, Keys, Opts) ->
     gen_server:start_link(?MODULE, [self(), LocalMember, Keys, Opts], []).
 
@@ -84,11 +104,11 @@ start_event_handlers(Owner) ->
 init([Owner, LocalMember, Keys, Opts]) ->
     {ok, SwimEvents} = start_event_handlers(Owner),
     {ok, Membership} = swim_membership:start_link(LocalMember, SwimEvents,
-						 swim_membership:opts(Opts)),
+                                                  swim_membership:opts(Opts)),
     {ok, Transport} = start_transport(LocalMember, Keys),
     State = init(Opts, #state{local_member=LocalMember, owner=Owner,
-			      broadcasts=SwimEvents,
-			      membership=Membership, transport=Transport}),
+                              broadcasts=SwimEvents,
+                              membership=Membership, transport=Transport}),
     self() ! protocol_period,
     {ok, State}.
 
@@ -179,10 +199,10 @@ handle_protocol_period(#state{current_ping=Ping} = State) ->
 
 send_next_ping(#state{ping_targets=[]} = State) ->
     case ping_targets(State) of
-	[] ->
-	    State;
-	PingTargets ->
-	    send_next_ping(State#state{ping_targets=PingTargets})
+        [] ->
+            State;
+        PingTargets ->
+            send_next_ping(State#state{ping_targets=PingTargets})
     end;
 send_next_ping(#state{ping_targets=[PingTarget|PingTargets]} = State) ->
     #state{local_member=LocalMember, sequence=Sequence} = State,
@@ -192,7 +212,7 @@ send_next_ping(#state{ping_targets=[PingTarget|PingTargets]} = State) ->
 ping_targets(State) ->
     #state{membership=Membership} = State,
     Members = swim_membership:members(Membership),
-    [{M, I} || {_, {M, _S, I}} <- lists:keysort(1, [{random:uniform(), N} || N <- Members])].
+    [{M, I} || {_, {M, _S, I}} <- lists:keysort(1, [{rand_compat:uniform(), N} || N <- Members])].
 
 create_ack_timer(Ref, State) ->
     #state{ack_timeout=Timeout} = State,
@@ -209,13 +229,13 @@ handle_ack_timeout(Ref, #state{current_ping=#ping{ref=Ref} = Ping} = State) ->
     #state{ack_proxies=AckProxies, sequence=Sequence} = State,
     #ping{terminal=Terminal} = Ping,
     _ = [PingReq || Proxy <- proxies(AckProxies, State),
-		    PingReq <- [send_ping_req(Proxy, Terminal, Sequence, State)]],
+                    PingReq <- [send_ping_req(Proxy, Terminal, Sequence, State)]],
     State.
 
 proxies(AckProxies, State) ->
     #state{current_ping=#ping{terminal=Terminal}} = State,
     lists:sublist([M || {M, _I} <- ping_targets(State),
-			 M /= Terminal], AckProxies).
+                        M /= Terminal], AckProxies).
 
 handle_ack(Sequence, From, #ping{sequence=Sequence, terminal=From} = Ping, State) ->
     #state{membership=Membership} = State,
@@ -226,17 +246,17 @@ handle_ack(Sequence, From, #ping{sequence=Sequence, terminal=From} = Ping, State
 handle_ack(Sequence, From, _CurrentPing, State) ->
     #state{proxy_pings=ProxyPings} = State,
     case lists:keytake(From, #ping.terminal, ProxyPings) of
-	{value, Ping, NewProxyPings} ->
-	    #ping{origin=Origin} = Ping,
-	    ok = send_ack(Origin, Sequence, From, State),
-	    State#state{proxy_pings=NewProxyPings};
-	false ->
-	    State
+        {value, Ping, NewProxyPings} ->
+            #ping{origin=Origin} = Ping,
+            ok = send_ack(Origin, Sequence, From, State),
+            State#state{proxy_pings=NewProxyPings};
+        false ->
+            State
     end.
 
 send_ack({Ip, Port}, Sequence, From, State) ->
     #state{transport=Transport, membership=Membership,
-	  broadcasts=Broadcasts} = State,
+           broadcasts=Broadcasts} = State,
     NumMembers = swim_membership:num_members(Membership),
     Events = swim_broadcasts:dequeue(Broadcasts, NumMembers),
     Msg = swim_messages:encode_ack(Sequence, From, Events),
@@ -250,7 +270,7 @@ send_ping_req({Ip, Port}, Terminal, Sequence, State) ->
 
 send_ping({{Ip, Port} = To, Incarnation}, From, Sequence, State) ->
     #state{transport=Transport, membership=Membership,
-	  broadcasts=Broadcasts} = State,
+           broadcasts=Broadcasts} = State,
     NumMembers = swim_membership:num_members(Membership),
     Events = swim_broadcasts:dequeue(Broadcasts, NumMembers),
     Msg = swim_messages:encode_ping(Sequence, Events),
@@ -258,16 +278,16 @@ send_ping({{Ip, Port} = To, Incarnation}, From, Sequence, State) ->
     Ref = make_ref(),
     TRef = create_ack_timer(Ref, State),
     Ping = #ping{sequence=Sequence,
-		 incarnation=Incarnation,
-		 origin=From, terminal=To, ref=Ref,
-		 tref=TRef, sent=erlang:monotonic_time()},
+                 incarnation=Incarnation,
+                 origin=From, terminal=To, ref=Ref,
+                 tref=TRef, sent=erlang:monotonic_time()},
     {ok, Ping}.
 
 handle_ping_req(Sequence, {Ip, Port} = Terminal, Origin, State) ->
     #state{proxy_pings=ProxyPings,
-	   membership=Membership,
-	   broadcasts=Broadcasts,
-	   transport=Transport} = State,
+           membership=Membership,
+           broadcasts=Broadcasts,
+           transport=Transport} = State,
     Ping = #ping{origin=Origin, terminal=Terminal},
     NumMembers = swim_membership:num_members(Membership),
     Events = swim_broadcasts:dequeue(Broadcasts, NumMembers),

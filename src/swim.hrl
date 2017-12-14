@@ -1,5 +1,5 @@
 %%% ----------------------------------------------------------------------------
-%%% Copyright (c) 2015. All Rights Reserved.
+%%% Copyright (c) 2015-2017. All Rights Reserved.
 %%%
 %%% Licensed under the Apache License,
 %%% Version 2.0 (the "License"); you may not use this file except in compliance
@@ -23,8 +23,8 @@
 -type membership_event()  :: {membership, {member_status(), member(), incarnation()}}.
 -type swim_event()        :: user_event() | membership_event().
 -type swim_message()      :: {ack, sequence(), member(), [swim_event()]} |
-			     {ping, sequence(), [swim_event()]} |
-			     {ping_req, sequence(), member()} |
-			     {leave, sequence()}.
+                             {ping, sequence(), [swim_event()]} |
+                             {ping_req, sequence(), member()} |
+                             {leave, sequence()}.
 -type key()               :: <<_:256>>.
 -type event_category()    :: user | membership.

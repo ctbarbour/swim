@@ -1,5 +1,5 @@
 %%% ----------------------------------------------------------------------------
-%%% Copyright (c) 2015 All Rights Reserved.
+%%% Copyright (c) 2015-2017 All Rights Reserved.
 %%%
 %%% Licensed under the Apache License,
 %%% Version 2.0 (the "License"); you may not use this file except in compliance
@@ -15,7 +15,7 @@
 %%% limitiations under the License.
 %%% ----------------------------------------------------------------------------
 
-%%% @copyright 2015
+%%% @copyright 2015-2017
 %%% @version {@version}
 
 %%% @doc This module is responsible for maintaining membership updates and user
@@ -51,9 +51,9 @@
 -behavior(gen_event).
 
 -export([max_transmissions/2, membership/2, user/2,
-	 dequeue/2, dequeue/3]).
+         dequeue/2, dequeue/3]).
 -export([init/1, handle_event/2, handle_call/2, handle_info/2,
-	 terminate/2, code_change/3]).
+         terminate/2, code_change/3]).
 
 -include("swim.hrl").
 
@@ -61,10 +61,10 @@
 -type event() :: {member_status(), member(), incarnation()} | term().
 
 -record(state, {
-	  retransmit_factor = 4  :: pos_integer(),
-	  membership_events = [] :: [{non_neg_integer(), member_state()}],
-	  user_events       = [] :: [{non_neg_integer(), binary()}]
-	 }).
+          retransmit_factor = 4  :: pos_integer(),
+          membership_events = [] :: [{non_neg_integer(), member_state()}],
+          user_events       = [] :: [{non_neg_integer(), binary()}]
+         }).
 
 %% @doc Calculates the maximum number of times an event should be broadcast.
 -spec max_transmissions(pos_integer(), pos_integer()) -> pos_integer().
@@ -124,8 +124,8 @@ handle_event({user, Event}, State) ->
 handle_event({membership, {_Status, Member, _Inc} = Event}, State) ->
     #state{membership_events=Events} = State,
     FilteredEvents = lists:filter(fun({_, {_, M, _}}) ->
-					  M /= Member
-				  end, Events),
+                                          M /= Member
+                                  end, Events),
     {ok, State#state{membership_events=[{0, Event}| FilteredEvents]}};
 handle_event(_, State) ->
     {ok, State}.
@@ -133,13 +133,13 @@ handle_event(_, State) ->
 %% @private
 handle_call({dequeue, MaxSize, NumMembers}, State) ->
     #state{membership_events=MEvents, retransmit_factor=RetransmitFactor,
-	   user_events=UEvents} = State,
+           user_events=UEvents} = State,
     MaxTransmissions = max_transmissions(NumMembers, RetransmitFactor),
     {SizeLeft, MBroadcast, MKeep} = do_dequeue(MaxSize, MaxTransmissions,
-					       [{T, {membership, MB}} || {T, MB} <- MEvents]),
+                                               [{T, {membership, MB}} || {T, MB} <- MEvents]),
     {_, UBroadcast, UKeep} = do_dequeue(SizeLeft, MaxTransmissions,
-					[{T, {user, UB}} || {T, UB} <- UEvents],
-					MBroadcast, []),
+                                        [{T, {user, UB}} || {T, UB} <- UEvents],
+                                        MBroadcast, []),
     Broadcast = lists:foldl(fun(B, Acc) -> << B/binary, Acc/binary>> end, <<>>, UBroadcast),
     {ok, Broadcast, State#state{membership_events=MKeep, user_events=UKeep}};
 handle_call(_, State) ->
@@ -168,12 +168,12 @@ do_dequeue(MaxSize, MaxTransmissions, [NextEvent | Events] = E, Broadcast, Keep)
     {_Transmissions, Msg} = NextEvent,
     Wire = swim_messages:encode_event(Msg),
     case MaxSize - size(Wire) of
-	NewSize when NewSize >= 0 ->
-	    NewBroadcast = [Wire | Broadcast],
-	    do_dequeue(NewSize, MaxTransmissions, Events, NewBroadcast,
-		       maybe_keep(MaxTransmissions, NextEvent, Keep));
-	NewSize when NewSize < 0 ->
-	    {0, Broadcast, lists:flatten([[{T, K} || {T, {_, K}} <- E] | Keep])}
+        NewSize when NewSize >= 0 ->
+            NewBroadcast = [Wire | Broadcast],
+            do_dequeue(NewSize, MaxTransmissions, Events, NewBroadcast,
+                       maybe_keep(MaxTransmissions, NextEvent, Keep));
+        NewSize when NewSize < 0 ->
+            {0, Broadcast, lists:flatten([[{T, K} || {T, {_, K}} <- E] | Keep])}
     end.
 
 %% @private

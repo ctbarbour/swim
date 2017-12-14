@@ -1,1 +1,6 @@
-[].
+{"1.1.0",
+[{<<"rand_compat">>,{pkg,<<"rand_compat">>,<<"0.0.3">>},0}]}.
+[
+{pkg_hash,[
+ {<<"rand_compat">>, <<"011646BC1F0B0C432FE101B816F25B9BBB74A085713CEE1DAFD2D62E9415EAD3">>}]}
+].

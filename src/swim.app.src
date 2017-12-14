@@ -1,6 +1,6 @@
 {application, swim,
  [{description, "Scalable Weakly Consistent Infection-style Process Group Membership Protocol"},
-  {vsn, "0.0.0"},
+  {vsn, semver},
   {registered, []},
   {mod, {'swim', []}},
   {applications,
@@ -9,13 +9,6 @@
     crypto
    ]},
   {env,[]},
-  {modules, [
-    swim,
-    swim_broadcasts,
-    swim_membership,
-    swim_messages,
-    swim_subscriptions,
-    swim_transport
-  ]},
+  {modules, []},
   {licenses, ["Apache 2.0"]}
  ]}.
