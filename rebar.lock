@@ -1,6 +1,8 @@
 {"1.1.0",
-[{<<"rand_compat">>,{pkg,<<"rand_compat">>,<<"0.0.3">>},0}]}.
+[{<<"rand_compat">>,{pkg,<<"rand_compat">>,<<"0.0.3">>},0},
+ {<<"time_compat">>,{pkg,<<"time_compat">>,<<"0.0.1">>},0}]}.
 [
 {pkg_hash,[
- {<<"rand_compat">>, <<"011646BC1F0B0C432FE101B816F25B9BBB74A085713CEE1DAFD2D62E9415EAD3">>}]}
+ {<<"rand_compat">>, <<"011646BC1F0B0C432FE101B816F25B9BBB74A085713CEE1DAFD2D62E9415EAD3">>},
+ {<<"time_compat">>, <<"23FE0AD1FDF3B5B88821B2D04B4B5E865BF587AE66056D671FE0F53514ED8139">>}]}
 ].

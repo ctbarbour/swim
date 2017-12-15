@@ -2,7 +2,7 @@
  [{description, "Scalable Weakly Consistent Infection-style Process Group Membership Protocol"},
   {vsn, semver},
   {registered, []},
-  {mod, {'swim', []}},
+  {mod, {swim_app, []}},
   {applications,
    [kernel,
     stdlib,

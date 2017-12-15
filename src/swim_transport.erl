@@ -61,7 +61,7 @@
 
 start_link(ListenPort, Keys)
   when is_list(Keys) andalso Keys /= [] ->
-    gen_server:start_link({local, ?MODULE}, [ListenPort, Keys], []).
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [ListenPort, Keys], []).
 
 rotate_keys(Pid, Key) ->
     gen_server:cast(Pid, {rotate_keys, Key}).
@@ -148,7 +148,7 @@ handle_ping(Sequence, Peer, State) ->
 
 handle_ack(Sequence, Responder, #state{current_ping = Ping} = State)
   when Ping#ping.sequence =:= Sequence andalso Ping#ping.terminal =:= Responder ->
-    time_compat:cancel_timer(Ping#ping.tref),
+    swim_time:cancel_timer(Ping#ping.tref),
     ok = swim_state:alive(Responder, Ping#ping.incarnation),
     State#state{current_ping = undefined};
 handle_ack(Sequence, Responder, State) ->
@@ -173,7 +173,7 @@ handle_ack_timeout(_Ref, State) ->
     State.
 
 send_ping_req(Peer, #ping{terminal = Terminal, sequence = Sequence}, State) ->
-    do_send(Peer, swim_message:encode_ping_req(Sequence, Terminal), State).
+    do_send(Peer, swim_messages:encode_ping_req(Sequence, Terminal), State).
 
 do_send({DestIp, DestPort}, Msg, State) ->
     Payload = encrypt(Msg, State),
@@ -184,7 +184,7 @@ send_ping({DestIp, DestPort} = Peer, Incarnation, Sequence, Proxies, Timeout, St
     case gen_udp:send(State#state.socket, DestIp, DestPort, Msg) of
         ok ->
             Ref = make_ref(),
-            TRef = time_compat:send_after(Timeout, self(), {ack_timeout, Ref}),
+            TRef = swim_time:send_after(Timeout, self(), {ack_timeout, Ref}),
             Ping = #ping{
                       origin      = State#state.local_member,
                       terminal    = Peer,

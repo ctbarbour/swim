@@ -28,15 +28,15 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, ListenIP} = application:get_env(swim, ip),
-    {ok, ListenPort} = application:get_env(swim, port),
-    Seeds = application:get_env(swim, seeds, []),
-    Keys = read_key_file(application:get_env(swim, keyfile)),
+    ListenIP = application:get_env(swim, ip, {127,0,0,1}),
+    ListenPort = application:get_env(swim, port, 5000),
+    LocalMember = {ListenIP, ListenPort},
+    Keys = get_key(),
     State = #{id => state,
-              start => {swim_state, start_link, [{seeds, Seeds}]}},
+              start => {swim_state, start_link, [LocalMember, #{}]}},
     Network = #{id => network,
                 start => {swim_transport, start_link,
-                          [ListenIP, ListenPort, Keys]}},
+                          [ListenPort, Keys]}},
     Flags = #{strategy => rest_for_one,
               intensity => 5,
               period => 900
@@ -47,4 +47,12 @@ read_key_file({ok, KeyFile}) ->
     {ok, EncodedKey} = file:read_file(KeyFile),
     [base64:decode(EncodedKey)];
 read_key_file(undefined) ->
-    [].
+    [crypto:strong_rand_bytes(32)].
+
+get_key() ->
+    case application:get_env(swim, key) of
+        {ok, Base64Key} ->
+            [base64:decode(Base64Key)];
+        undefined ->
+            read_key_file(application:get_env(swim, keyfile))
+    end.

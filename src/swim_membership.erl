@@ -36,34 +36,42 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--define(LOCAL_MEMBER, {{127,0,0,1}, 5000}).
 -endif.
 
--export([alive/3]).
--export([suspect/3]).
--export([faulty/3]).
+-export([new/1]).
+-export([local_member/1]).
 -export([members/1]).
 -export([size/1]).
--export([local_member/1]).
--export([set_status/3]).
+-export([alive/3]).
+-export([suspect/2]).
+-export([suspect/3]).
+-export([confirm/2]).
+-export([confirm/3]).
+-export([suspicion_timeout/1]).
 
 -record(membership, {
-          local_member                :: member(),
-          incarnation        = 0      :: non_neg_integer(),
-          members            = #{}    :: #{member() => member_state()},
-          suspicion_factor   = 5      :: pos_integer()
+          local_member             :: member(),
+          incarnation        = 0   :: incarnation(),
+          members            = #{} :: #{member() => member_state()},
+          suspicion_factor   = 5   :: pos_integer()
          }).
 
--record(member_state, {
-          status        = alive :: member_status(),
-          incarnation   = 0     :: non_neg_integer(),
-          last_modified         :: integer()
-         }).
-
--type member_state() :: #member_state{}.
--opaque membership()   :: #membership{}.
-
+-type member_state() ::
+        #{
+           status        => member_state(),
+           incarnation   => incarnation(),
+           last_modified => erlang:timestamp(),
+           fault_after   => incarnation()
+         }.
+-opaque membership() :: #membership{}.
 -export_type([membership/0]).
+
+-spec new(LocalMember) -> Membership when
+      LocalMember :: member(),
+      Membership  :: membership().
+
+new(LocalMember) ->
+    #membership{local_member = LocalMember}.
 
 %% @doc The number of known members in the gossip group, including the local member
 -spec size(Membership) -> NumMembers when
@@ -81,27 +89,34 @@ size(#membership{members = Members}) ->
 local_member(#membership{local_member = LocalMember}) ->
     LocalMember.
 
-%% @doc Forcibly set the status of a member
-%%
-%% In certain circumstances we want to be able to set the status of a member
-%% without regard to the rules of the suspecicon mechanism which uses a member's
-%% current status and incarnation.
-%% @end
--spec set_status(pid(), member(), member_status()) -> ok.
-set_status(Pid, Member, Status) ->
-    gen_server:cast(Pid, {set_status, Member, Status}).
+%% @doc A list of known members and their status
+-spec members(Membership) -> [{Member, Status, Incarnation}] when
+      Membership  :: membership(),
+      Member      :: member(),
+      Status      :: member_status(),
+      Incarnation :: incarnation().
+
+members(#membership{members = Members}) ->
+    maps:fold(
+      fun(Member, #{status := Status, incarnation := Incarnation}, Acc) ->
+              [{Member, Status, Incarnation} | Acc]
+      end, [], Members).
 
 %% @doc Set the member status to alive
 %%
 %% If the member isn't known it's added to the membership and an event is
-%% broadcast to the group. If the member is known and the incarnation is
-%% greater than the current incarnation of the member, we update the incarnation
-%% of member and broadcast an event to group. Otherwise, we do nothing.
+%% broadcast to notify the group of the alive member. If the member is known and the incarnation is
+%% greater than the current incarnation of the member we update the incarnation
+%% of member and broadcast an event to group. If the member is the local member and the incarnation
+%% is greater than the current incarnation we refute the alive message by setting our current
+%% incarnation to 1 + the received incarnation and then broad a new alive message to the group.
+%% If none of the above conditions are meet we do nothing.
 %% @end
--spec alive(Member, Incarnation, Membership0) -> Membership when
+-spec alive(Member, Incarnation, Membership0) -> {Events, Membership} when
       Member      :: member(),
       Incarnation :: incarnation(),
       Membership0 :: membership(),
+      Events      :: [membership_event()],
       Membership  :: membership().
 
 alive(Member, Incarnation, Membership)
@@ -115,28 +130,31 @@ alive(Member, Incarnation, Membership)
 alive(Member, Incarnation, Membership) ->
     #membership{members = CurrentMembers} = Membership,
     case maps:find(Member, CurrentMembers) of
-        {ok, #member_state{incarnation = CurrentIncarnation} = State0}
+        error ->
+            State = #{
+              status        => alive,
+              incarnation   => Incarnation,
+              last_modified => swim_time:monotonic_time()
+             },
+            NewMembers = maps:put(Member, State, CurrentMembers),
+            Events = [{alive, Member, Incarnation}],
+            {Events, Membership#membership{members = NewMembers}};
+        {ok, #{incarnation := CurrentIncarnation}}
           when Incarnation > CurrentIncarnation ->
-            State = State0#member_state{
-                      status        = alive,
-                      incarnation   = Incarnation,
-                      last_modified = time_compat:monotonic_time()
-                     },
+            State = #{
+              status        => alive,
+              incarnation   => Incarnation,
+              last_modified => swim_time:monotonic_time()
+             },
             NewMembers = maps:put(Member, State, CurrentMembers),
             Events = [{alive, Member, Incarnation}],
             {Events, Membership#membership{members = NewMembers}};
         {ok, _State} ->
-            {[], Membership};
-        error ->
-            State = #member_state{
-                       status        = alive,
-                       incarnation   = Incarnation,
-                       last_modified = time_compat:monotonic_time()
-                      },
-            NewMembers = maps:put(Member, State, CurrentMembers),
-            Events = [{alive, Member, Incarnation}],
-            {Events, Membership#membership{members = NewMembers}}
+            {[], Membership}
     end.
+
+suspect(Member, Membership) ->
+    suspect(Member, current, Membership).
 
 %% @doc Set the member status to suspect
 %%
@@ -151,10 +169,48 @@ alive(Member, Incarnation, Membership) ->
 %% If the suspected member is the local member we refute by incrementing our own
 %% incarnation and broadcasting the change to the group.
 %% @end
--spec suspect(pid(), member(), incarnation())
-             -> [{member_status(), member(), incarnation()}].
-suspect(Pid, Member, Incarnation) ->
-    gen_server:call(Pid, {suspect, Member, Incarnation}).
+-spec suspect(Member, Incarnation, Membership0) -> {Events, Membership} when
+      Member      :: member(),
+      Incarnation :: incarnation(),
+      Membership0 :: membership(),
+      Events      :: [membership_event()],
+      Membership  :: membership().
+
+suspect(Member, Incarnation, Membership)
+  when Member =:= Membership#membership.local_member ->
+    refute(Incarnation, Membership);
+suspect(Member, Incarnation, Membership) ->
+    #membership{members = CurrentMembers, suspicion_factor = Factor} = Membership,
+    case maps:find(Member, CurrentMembers) of
+        {ok, #{status := suspect, incarnation := CurrentIncarnation} = MemberState}
+          when Incarnation =:= current orelse Incarnation > CurrentIncarnation ->
+            NewIncarnation = case Incarnation of current -> CurrentIncarnation;
+                                 _ -> Incarnation end,
+            NewState = MemberState#{
+                         incarnation   => NewIncarnation,
+                         last_modified => swim_time:monotonic_time()},
+            NewMembers = maps:put(Member, NewState, CurrentMembers),
+            Events = [{suspect, Member, Incarnation}],
+            {Events, Membership#membership{members = NewMembers}};
+        {ok, #{status := alive, incarnation := CurrentIncarnation} = MemberState}
+          when Incarnation =:= current orelse Incarnation >= CurrentIncarnation ->
+            NewIncarnation = case Incarnation of current -> CurrentIncarnation;
+                                 _ -> Incarnation end,
+            NewState = MemberState#{
+                         status        => suspect,
+                         incarnation   => NewIncarnation,
+                         last_modified => swim_time:monotonic_time(),
+                         confirm_at    => confirm_after(CurrentMembers, Factor)
+                        },
+            NewMembers = maps:put(Member, NewState, CurrentMembers),
+            Events = [{suspect, Member, Incarnation}],
+            {Events, Membership#membership{members = NewMembers}};
+        error ->
+            {[], Membership}
+    end.
+
+confirm(Member, Membership) ->
+    confirm(Member, current, Membership).
 
 %% @doc Remove the member from the group
 %%
@@ -162,263 +218,63 @@ suspect(Pid, Member, Incarnation) ->
 %% we remove the member and broadcast the change if the provided incarnation is
 %% greater than the current incarnation of the member.
 %% @end
--spec faulty(pid(), member(), incarnation())
-            -> [{member_status(), member(), incarnation()}].
-faulty(Pid, Member, Incarnation) ->
-    gen_server:call(Pid, {faulty, Member, Incarnation}).
+-spec confirm(Member, Incarnation, Membership0) -> {Events, Membership} when
+      Member      :: member(),
+      Incarnation :: incarnation(),
+      Membership0 :: membership(),
+      Events      :: [membership_event()],
+      Membership  :: membership().
 
-%% @doc A list of known members and their status
--spec members(pid()) -> [{member_status(), member(), incarnation()}].
-members(Pid) ->
-    gen_server:call(Pid, members).
-
--spec start_link(member(), pid(), [swim_membership_opt()]) -> {ok, pid()}.
-start_link(LocalMember, EventMgrPid, Opts) ->
-    gen_server:start_link(?MODULE, [LocalMember, EventMgrPid, Opts], []).
-
-%% @private
-handle_opts([], State) ->
-    State;
-handle_opts([{suspicion_factor, Val} | Rest], State) ->
-    handle_opts(Rest, State#state{suspicion_factor=Val});
-handle_opts([{protocol_period, Val} | Rest], State) ->
-    handle_opts(Rest, State#state{protocol_period=Val});
-handle_opts([{seeds, Seeds} | Rest], State) ->
-    #state{members=Members} = State,
-    NewMembers = lists:foldl(
-                   fun(Member, Acc) ->
-                           MemberState = #member_state{status=alive,
-                                                       incarnation=0,
-                                                       last_modified=erlang:monotonic_time()},
-                           maps:put(Member, MemberState, Acc)
-                   end, Members, Seeds),
-    handle_opts(Rest, State#state{members=NewMembers});
-handle_opts([_ | Rest], State) ->
-    handle_opts(Rest, State).
-
-%% @private
-init([LocalMember, EventMgrPid, Opts]) ->
-    State = handle_opts(Opts, #state{local_member=LocalMember,
-                                     event_mgr_pid=EventMgrPid}),
-    {ok, State}.
-
-%% @private
-handle_call(num_members, _From, State) ->
-    #state{members=Members} = State,
-    {reply, maps:size(Members) + 1, State};
-handle_call(local, _From, State) ->
-    {reply, State#state.local_member, State};
-handle_call(members, _From, State) ->
-    #state{members=Members} = State,
-    M = maps:fold(
-          fun(Member, MemberState, Acc) ->
-                  #member_state{status=Status, incarnation=Inc} = MemberState,
-                  [{Member, Status, Inc} | Acc]
-          end, [], Members),
-    {reply, M, State};
-handle_call({alive, Member, Incarnation}, _From, #state{local_member=Member} = State) ->
-    #state{incarnation=CurrentIncarnation} = State,
-    case Incarnation =< CurrentIncarnation of
-        true ->
-            {reply, ok, State};
-        false ->
-            {Events, NewState} = refute(Incarnation, State),
-            ok = publish_events(Events, State),
-            {reply, Events, NewState}
+confirm(Member, Incarnation, Membership)
+  when Member =:= Membership#membership.local_member andalso
+       is_integer(Incarnation) andalso Incarnation >= 0 ->
+    refute(Incarnation, Membership);
+confirm(Member, current, Membership) ->
+    #membership{members = CurrentMembers} = Membership,
+    case maps:take(Member, CurrentMembers) of
+        {#{status := suspect, incarnation := Incarnation}, NewMembers} ->
+            {[{confirm, Member, Incarnation}],
+             Membership#membership{members = NewMembers}};
+        _ ->
+            {[], Membership}
     end;
-handle_call({alive, Member, Incarnation}, _From, State) ->
-    #state{members=Members} = State,
+confirm(Member, Incarnation, Membership)
+  when is_integer(Incarnation) andalso Incarnation >= 0 ->
+    #membership{members = CurrentMembers} = Membership,
     {Events, NewMembers} =
-        case maps:find(Member, Members) of
-            {ok, MemberState} ->
-                #member_state{incarnation=CurrentIncarnation} = MemberState,
-                case Incarnation > CurrentIncarnation of
-                    true ->
-                        NewState = MemberState#member_state{status=alive,
-                                                            incarnation=Incarnation,
-                                                            last_modified=erlang:monotonic_time()},
-                        Ms = maps:put(Member, NewState, Members),
-                        {[{alive, Member, Incarnation}], Ms};
-                    false ->
-                        {[], Members}
-                end;
-            error ->
-                NewState = #member_state{status=alive,
-                                         incarnation=Incarnation,
-                                         last_modified=erlang:monotonic_time()},
-                Ms = maps:put(Member, NewState, Members),
-                {[{alive, Member, Incarnation}], Ms}
+        case maps:find(Member, CurrentMembers) of
+            {ok, #{incarnation := CurrentIncarnation}}
+              when Incarnation < CurrentIncarnation ->
+                {[], CurrentMembers};
+            {ok, #{incarnation := CurrentIncarnation}} ->
+                {[{confirm, Member, CurrentIncarnation}], maps:remove(Member, CurrentMembers)};
+            _ ->
+                {[], CurrentMembers}
         end,
-    ok = publish_events(Events, State),
-    {reply, Events, State#state{members=NewMembers}};
-handle_call({suspect, Member, Incarnation}, _From, #state{local_member=Member} = State) ->
-    {Events, NewState} = refute(Incarnation, State),
-    {reply, Events, NewState};
-handle_call({suspect, Member, Incarnation}, _From, State) ->
-    #state{members=Members} = State,
-    {Events, NewMembers} =
-        case maps:find(Member, Members) of
-            {ok, MemberState} ->
-                case MemberState of
-                    #member_state{status=suspect, incarnation=CurrentIncarnation}
-                      when Incarnation > CurrentIncarnation ->
-                        NewState = MemberState#member_state{status=suspect,
-                                                            incarnation=Incarnation,
-                                                            last_modified=erlang:monotonic_time()},
-                        Ms = maps:put(Member, NewState, Members),
-                        _ = suspicion_timer(Member, NewState, State),
-                        {[{suspect, Member, Incarnation}], Ms};
-                    #member_state{status=alive, incarnation=CurrentIncarnation}
-                      when Incarnation >= CurrentIncarnation ->
-                        NewState = MemberState#member_state{status=suspect,
-                                                            incarnation=Incarnation,
-                                                            last_modified=erlang:monotonic_time()},
-                        Ms = maps:put(Member, NewState, Members),
-                        _ = suspicion_timer(Member, NewState, State),
-                        {[{suspect, Member, Incarnation}], Ms};
-                    _ ->
-                        {[], Members}
-                end;
-            error ->
-                {[], Members}
-        end,
-    {reply, Events, State#state{members=NewMembers}};
-handle_call({faulty, Member, Incarnation}, _From, #state{local_member=Member} = State) ->
-    {Events, NewState} = refute(Incarnation, State),
-    {reply, Events, NewState};
-handle_call({faulty, Member, Incarnation}, _From, State) ->
-    #state{members=Members} = State,
-    {Events, NewMembers} =
-        case maps:find(Member, Members) of
-            {ok, MemberState} ->
-                #member_state{incarnation=CurrentIncarnation} = MemberState,
-                case Incarnation < CurrentIncarnation of
-                    true ->
-                        {[], Members};
-                    false ->
-                        Ms = maps:remove(Member, Members),
-                        {[{faulty, Member, CurrentIncarnation}], Ms}
-                end;
-            error ->
-                {[], Members}
-        end,
-    ok = publish_events(Events, State),
-    {reply, Events, State#state{members=NewMembers}};
-handle_call(_Msg, _From, State) ->
-    {noreply, State}.
+    {Events, Membership#membership{members = NewMembers}}.
+
+suspicion_timeout(Membership) ->
+    #membership{members = Members} = Membership,
+    {Events, NewMembers} = maps:fold(fun suspicion_fold/3, {[], #{}}, Members),
+    {Events, Membership#membership{members = NewMembers}}.
+
+suspicion_fold(M, #{status := suspect, confirm_at := 1, incarnation := I}, {F, K}) ->
+    {[{confirm, M, I} | F], K};
+suspicion_fold(M, #{status := suspect, confirm_at := At} = S, {F, K}) ->
+    {F, K#{M => S#{confirm_at => At - 1}}};
+suspicion_fold(M, S, {F, K}) ->
+    {F, K#{M => S}}.
 
 %% @private
-handle_cast({set_status, Member, Status}, State) ->
-    #state{members=Members} = State,
-    {_Events, NewMembers} =
-        case maps:find(Member, Members) of
-            {ok, MemberState} ->
-                NewMemberState = MemberState#member_state{status=Status,
-                                                          last_modified=erlang:monotonic_time()},
-                Ms = maps:put(Member, NewMemberState, Members),
-                case Status of
-                    suspect ->
-                        _ = suspicion_timer(Member, NewMemberState, State),
-                        {[{suspect, Member, NewMemberState#member_state.incarnation}], Ms};
-                    _ ->
-                        {[], Ms}
-                end;
-            error ->
-                {[], Members}
-        end,
-    {noreply, State#state{members=NewMembers}};
-handle_cast(_Msg, State) ->
-    {noreply, State}.
+%% @doc The number of protocol periods between suspecting a member and considering it faulty
+confirm_after(Members, Factor) ->
+    round(math:log(maps:size(Members) + 2)) * Factor.
 
 %% @private
-handle_info({suspect_timeout, Member, SuspectedAt}, State) ->
-    #state{members=Members} = State,
-    {Events, NewMembers} =
-        case maps:find(Member, Members) of
-            {ok, MemberState} ->
-                case MemberState of
-                    #member_state{incarnation=SuspectedAt, status=suspect} ->
-                        Ms = maps:remove(Member, Members),
-                        {[{faulty, Member, SuspectedAt}], Ms};
-                    _ ->
-                        {[], Members}
-                end;
-            error ->
-                {[], Members}
-        end,
-    ok = publish_events(Events, State),
-    {noreply, State#state{members=NewMembers}};
-handle_info(_Info, State) ->
-    {noreply, State}.
-
-%% @private
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
-
-%% @private
-terminate(_Reason, _State) ->
-    ok.
-
-%% @private
-suspicion_timeout(State) ->
-    #state{members=Members, suspicion_factor=Factor,
-           protocol_period=ProtocolPeriod} = State,
-    round(math:log(maps:size(Members) + 2)) * Factor * ProtocolPeriod.
-
-%% @private
-suspicion_timer(Member, MemberState, State) ->
-    #member_state{incarnation=Incarnation} = MemberState,
-    Msg = {suspect_timeout, Member, Incarnation},
-    erlang:send_after(suspicion_timeout(State), self(), Msg).
-
-%% @private
-refute(Incarnation, #state{incarnation=CurrentIncarnation} = State)
-  when Incarnation >= CurrentIncarnation ->
-    #state{local_member=LocalMember} = State,
+refute(Incarnation, #membership{local_member = LocalMember} = Membership)
+  when Incarnation >= Membership#membership.incarnation ->
     NewIncarnation = Incarnation + 1,
-    {[{alive, LocalMember, NewIncarnation}], State#state{incarnation=NewIncarnation}};
-refute(Incarnation, #state{incarnation=CurrentIncarnation} = State)
+    {[{alive, LocalMember, NewIncarnation}], Membership#membership{incarnation = NewIncarnation}};
+refute(Incarnation, #membership{incarnation = CurrentIncarnation} = Membership)
   when Incarnation < CurrentIncarnation ->
-    #state{local_member=LocalMember} = State,
-    {[{alive, LocalMember, CurrentIncarnation}], State}.
-
-%% @private
-publish_events(Events, State) ->
-    #state{event_mgr_pid=EventMgrPid} = State,
-    _ = [swim_broadcasts:membership(EventMgrPid, Event) || Event <- Events],
-    ok.
-
--ifdef(TEST).
-
-membership_v2_local_member_test() ->
-    {ok, EventMgrPid} = gen_event:start_link(),
-    {ok, Membership} = swim_membership:start_link(?LOCAL_MEMBER, EventMgrPid, []),
-    ?assertMatch(?LOCAL_MEMBER, swim_membership:local_member(Membership)).
-
-membership_v2_suspect_timeout_test() ->
-    {ok, EventMgrPid} = gen_event:start_link(),
-    Seed = {{10,10,10,10}, 5000},
-    {ok, Membership} = swim_membership:start_link(?LOCAL_MEMBER, EventMgrPid,
-                                                  [{suspicion_factor, 1},
-                                                   {protocol_period, 100},
-                                                   {seeds, [Seed]}]),
-    _ = swim_membership:suspect(Membership, Seed, 1),
-    ok = timer:sleep(100),
-    Members = [M || {M, _, _} <- swim_membership:members(Membership)],
-    ok = gen_event:stop(EventMgrPid),
-    ?assertNot(lists:member(Seed, Members)).
-
-membership_v2_suspect_timeout_refute_test() ->
-    {ok, EventMgrPid} = gen_event:start_link(),
-    Seed = {{10,10,10,10}, 5000},
-    {ok, Membership} = swim_membership:start_link(?LOCAL_MEMBER, EventMgrPid,
-                                                  [{suspicion_factor, 10},
-                                                   {protocol_period, 5000},
-                                                   {seeds, [Seed]}]),
-    _ = swim_membership:suspect(Membership, Seed, 1),
-    _ = swim_membership:alive(Membership, Seed, 2),
-    Members = swim_membership:members(Membership),
-    ok = gen_event:stop(EventMgrPid),
-    ?assert(lists:member({Seed, alive, 2}, Members)).
-
--endif.
+    {[{alive, Membership#membership.local_member, CurrentIncarnation}], Membership}.
