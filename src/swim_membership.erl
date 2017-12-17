@@ -38,7 +38,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
--export([new/1]).
+-export([new/3]).
 -export([local_member/1]).
 -export([members/1]).
 -export([size/1]).
@@ -47,13 +47,14 @@
 -export([suspect/3]).
 -export([confirm/2]).
 -export([confirm/3]).
--export([suspicion_timeout/1]).
+-export([suspicion_timeout/3]).
 
 -record(membership, {
           local_member             :: member(),
           incarnation        = 0   :: incarnation(),
           members            = #{} :: #{member() => member_state()},
-          suspicion_factor   = 5   :: pos_integer()
+          suspicion_factor         :: pos_integer(),
+          protocol_period          :: pos_integer()
          }).
 
 -type member_state() ::
@@ -66,12 +67,18 @@
 -opaque membership() :: #membership{}.
 -export_type([membership/0]).
 
--spec new(LocalMember) -> Membership when
-      LocalMember :: member(),
-      Membership  :: membership().
+-spec new(LocalMember, ProtocolPeriod, SuspicionFactor) -> Membership when
+      LocalMember     :: member(),
+      ProtocolPeriod  :: pos_integer(),
+      SuspicionFactor :: pos_integer(),
+      Membership      :: membership().
 
-new(LocalMember) ->
-    #membership{local_member = LocalMember}.
+new(LocalMember, ProtocolPeriod, SuspicionFactor) ->
+    #membership{
+       local_member     = LocalMember,
+       protocol_period  = ProtocolPeriod,
+       suspicion_factor = SuspicionFactor
+      }.
 
 %% @doc The number of known members in the gossip group, including the local member
 -spec size(Membership) -> NumMembers when
@@ -139,8 +146,12 @@ alive(Member, Incarnation, Membership) ->
             NewMembers = maps:put(Member, State, CurrentMembers),
             Events = [{alive, Member, Incarnation}],
             {Events, Membership#membership{members = NewMembers}};
-        {ok, #{incarnation := CurrentIncarnation}}
+        {ok, #{incarnation := CurrentIncarnation} = S}
           when Incarnation > CurrentIncarnation ->
+            case maps:find(tref, S) of
+                {ok, TRef} -> swim_time:cancel_timer(TRef);
+                error -> ok
+            end,
             State = #{
               status        => alive,
               incarnation   => Incarnation,
@@ -180,7 +191,7 @@ suspect(Member, Incarnation, Membership)
   when Member =:= Membership#membership.local_member ->
     refute(Incarnation, Membership);
 suspect(Member, Incarnation, Membership) ->
-    #membership{members = CurrentMembers, suspicion_factor = Factor} = Membership,
+    #membership{members = CurrentMembers} = Membership,
     case maps:find(Member, CurrentMembers) of
         {ok, #{status := suspect, incarnation := CurrentIncarnation} = MemberState}
           when Incarnation =:= current orelse Incarnation > CurrentIncarnation ->
@@ -199,13 +210,23 @@ suspect(Member, Incarnation, Membership) ->
             NewState = MemberState#{
                          status        => suspect,
                          incarnation   => NewIncarnation,
-                         last_modified => swim_time:monotonic_time(),
-                         confirm_at    => confirm_after(CurrentMembers, Factor)
+                         tref          => confirm_after(Member, NewIncarnation, Membership),
+                         last_modified => swim_time:monotonic_time()
                         },
+            confirm_after(Member, NewIncarnation, Membership),
             NewMembers = maps:put(Member, NewState, CurrentMembers),
             Events = [{suspect, Member, Incarnation}],
             {Events, Membership#membership{members = NewMembers}};
         error ->
+            {[], Membership}
+    end.
+
+suspicion_timeout(Member, SuspectedAt, Membership) ->
+    case maps:find(Member, Membership#membership.members) of
+        {ok, #{incarnation := CurrentIncarnation}}
+          when SuspectedAt =< CurrentIncarnation ->
+            confirm(Member, Membership);
+        _ ->
             {[], Membership}
     end.
 
@@ -253,22 +274,12 @@ confirm(Member, Incarnation, Membership)
         end,
     {Events, Membership#membership{members = NewMembers}}.
 
-suspicion_timeout(Membership) ->
-    #membership{members = Members} = Membership,
-    {Events, NewMembers} = maps:fold(fun suspicion_fold/3, {[], #{}}, Members),
-    {Events, Membership#membership{members = NewMembers}}.
-
-suspicion_fold(M, #{status := suspect, confirm_at := 1, incarnation := I}, {F, K}) ->
-    {[{confirm, M, I} | F], K};
-suspicion_fold(M, #{status := suspect, confirm_at := At} = S, {F, K}) ->
-    {F, K#{M => S#{confirm_at => At - 1}}};
-suspicion_fold(M, S, {F, K}) ->
-    {F, K#{M => S}}.
-
 %% @private
 %% @doc The number of protocol periods between suspecting a member and considering it faulty
-confirm_after(Members, Factor) ->
-    round(math:log(maps:size(Members) + 2)) * Factor.
+confirm_after(Member, Incarnation, Membership) ->
+    After = round(math:log(maps:size(Membership#membership.members) + 2)) *
+        Membership#membership.suspicion_factor * Membership#membership.protocol_period,
+    erlang:send_after(After, self(), {suspicion_timeout, Member, Incarnation}).
 
 %% @private
 refute(Incarnation, #membership{local_member = LocalMember} = Membership)

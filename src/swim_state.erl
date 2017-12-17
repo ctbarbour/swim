@@ -28,7 +28,9 @@
 -export([leave/0]).
 -export([members/0]).
 -export([local_member/0]).
--export([alive/2]).
+
+-export([ping/1]).
+-export([ack/2]).
 
 -export([init/1]).
 -export([handle_call/3]).
@@ -62,8 +64,11 @@ local_member() ->
 members() ->
     gen_server:call(?MODULE, members).
 
-alive(Peer, Incarnation) ->
-    gen_server:cast(?MODULE, {alive, Peer, Incarnation}).
+ack(Peer, Incarnation) ->
+    gen_server:cast(?MODULE, {ack, Peer, Incarnation}).
+
+ping(Peer) ->
+    gen_server:cast(?MODULE, {ping, Peer}).
 
 %% @private
 init([LocalMember, Opts]) ->
@@ -90,11 +95,18 @@ handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
 %% @private
-handle_cast({alive, Peer, Incarnation}, #state{current_ping = Peer} = State) ->
+handle_cast({ack, Peer, Incarnation}, State) ->
+    CurrentPing =
+        case State#state.current_ping =:= Peer of
+            true ->
+                undefined;
+            _ ->
+                State#state.current_ping
+        end,
     {_Events, Membership} = swim_membership:alive(Peer, Incarnation, State#state.membership),
-    {noreply, State#state{current_ping = undefined, membership = Membership}};
-handle_cast({alive, Peer, Incarnation}, State) ->
-    {_Events, Membership} = swim_membership:alive(Peer, Incarnation, State#state.membership),
+    {noreply, State#state{membership = Membership, current_ping = CurrentPing}};
+handle_cast({ping, Peer}, State) ->
+    {_Events, Membership} = swim_membership:alive(Peer, 0, State#state.membership),
     {noreply, State#state{membership = Membership}};
 handle_cast({join, Seeds}, State) ->
     NewMembership =
@@ -109,9 +121,13 @@ handle_cast(_Msg, State) ->
 
 %% @private
 handle_info(protocol_period, #state{sequence = Sequence} = State) ->
-    NewState = handle_protocol_period(suspicion_timeout(State)),
+    NewState = handle_protocol_period(State),
     ok = schedule_next_protocol_period(NewState),
     {noreply, NewState#state{sequence = Sequence + 1}};
+handle_info({suspicion_timeout, Member, SuspectedAt}, State) ->
+    {_Events, Membership} =
+        swim_membership:suspicion_timeout(Member, SuspectedAt, State#state.membership),
+    {noreply, State#state{membership = Membership}};
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -122,10 +138,6 @@ code_change(_OldVsn, State, _Extra) ->
 %% @private
 terminate(_Reason, _State) ->
     ok.
-
-suspicion_timeout(State) ->
-    {_Events, Membership} = swim_membership:suspicion_timeout(State#state.membership),
-    State#state{membership = Membership}.
 
 handle_protocol_period(#state{current_ping = undefined} = State) ->
     send_next_ping(State);

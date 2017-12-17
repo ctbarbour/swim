@@ -28,15 +28,3 @@
                              {leave, sequence()}.
 -type key()               :: <<_:256>>.
 -type event_category()    :: user | membership.
-
--record(ping, {
-          sequence    :: non_neg_integer(),
-          origin      :: member(),
-          terminal    :: member(),
-          incarnation :: incarnation(),
-          proxies     :: nonempty_list(member()),
-          ref         :: undefined | reference(),
-          tref        :: undefined | reference()
-         }).
-
--type ping() :: #ping{}.
