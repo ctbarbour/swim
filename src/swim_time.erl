@@ -11,4 +11,4 @@ cancel_timer(TRef) ->
     erlang:cancel_timer(TRef).
 
 monotonic_time() ->
-    time_compat:monotonic_time().
+    erlang:monotonic_time().

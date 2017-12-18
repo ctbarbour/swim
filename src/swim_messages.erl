@@ -52,6 +52,7 @@
 
 -export([encode/1]).
 -export([decode/1]).
+-export([encode_event/1]).
 -export([event_size_limit/0]).
 
 -include("swim.hrl").
@@ -143,8 +144,7 @@ encode_event({membership, {Status, Incarnation, Member}}) ->
                faulty  -> $f
            end,
     [$m, Code, <<Incarnation:32/integer>>, encode_member(Member)];
-encode_event({user, Term}) ->
-    Bin = term_to_binary(Term),
+encode_event({user, Bin}) when is_binary(Bin) ->
     [$u, <<(byte_size(Bin)):16/integer>>, Bin].
 
 %% @doc Encodes a Member as the IP address and port number combination.
@@ -168,7 +168,7 @@ encode_event({user, Term}) ->
 %%   <dd>is the associated Port Number the Member is listening on</dd>
 %% </dl>
 %% @end
--spec encode_member(Member) -> iolist() when
+-spec encode_member(Member) -> binary() when
       Member :: member().
 
 encode_member({{A1, A2, A3, A4}, Port}) ->
@@ -217,5 +217,5 @@ decode_es(K, <<$m, StatusCode:8/integer, Inc:32/integer, L:8, Member:L/binary, E
                  $f -> faulty
              end,
     [{membership, {Status, Inc, decode_member(Member)}} | decode_es(K - 1, Events)];
-decode_es(K, <<$u, L:16/integer, Event:L, Events>>) ->
-    [{user, binary_to_term(Event)} | decode_es(K - 1, Events)].
+decode_es(K, <<$u, L:16/integer, Event:L/binary, Events/binary>>) ->
+    [{user, Event} | decode_es(K - 1, Events)].

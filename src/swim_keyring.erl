@@ -21,7 +21,7 @@ new(Keys)
 
 add(Key, KeyRing)
   when is_binary(Key) andalso byte_size(Key) =:= 32 ->
-    #keyring{keys = [Key | KeyRing#keyring.keys]}.
+    KeyRing#keyring{keys = [Key | KeyRing#keyring.keys]}.
 
 %% @doc Encrypts the provided plain text using the Advanced Encryption Standard
 %% (AES) in Galois/Counter (GCM) using the provided 32-octet Key,
@@ -30,12 +30,11 @@ add(Key, KeyRing)
 %% the 16-octet CipherTag and the block encrypted cipher text.
 %% @end
 -spec encrypt(PlainText, Keyring) -> CipherText when
-      PlainText  :: binary(),
+      PlainText  :: iodata(),
       Keyring    :: keyring(),
-      CipherText :: binary().
+      CipherText :: iodata().
 
-encrypt(PlainText, #keyring{keys = [Key | _], aad = AAD})
-  when is_binary(PlainText) ->
+encrypt(PlainText, #keyring{keys = [Key | _], aad = AAD}) ->
     IV = crypto:strong_rand_bytes(16),
     {CipherText, CipherTag} = crypto:block_encrypt(aes_gcm, Key, IV, {AAD, PlainText}),
     <<IV/binary, CipherTag/binary, CipherText/binary>>.
@@ -62,6 +61,6 @@ decrypt_loop([Key | Keys], AAD, IV, CipherTag, CipherText) ->
         error ->
             decrypt_loop(Keys, AAD, IV, CipherTag, CipherText);
         PlainText ->
-            PlainText
+            {ok, PlainText}
     end.
 

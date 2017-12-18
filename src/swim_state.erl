@@ -24,13 +24,13 @@
 -include("swim.hrl").
 
 -export([start_link/2]).
+-export([local_member/0]).
 -export([join/1]).
 -export([leave/0]).
 -export([members/0]).
--export([local_member/0]).
-
--export([ping/1]).
+-export([proxies/1]).
 -export([ack/2]).
+-export([nack/2]).
 
 -export([init/1]).
 -export([handle_call/3]).
@@ -43,7 +43,7 @@
           protocol_period        :: pos_integer(),
           ack_timeout            :: pos_integer(),
           num_proxies            :: pos_integer(),
-          current_ping           :: undefined | member(),
+          current_ping           :: undefined | {member(), incarnation()},
           ping_targets    = []   :: [{member(), incarnation()}],
           sequence        = 0    :: non_neg_integer(),
           membership             :: swim_membership:membership()
@@ -64,25 +64,30 @@ local_member() ->
 members() ->
     gen_server:call(?MODULE, members).
 
-ack(Peer, Incarnation) ->
-    gen_server:cast(?MODULE, {ack, Peer, Incarnation}).
+proxies(Target) ->
+    gen_server:call(?MODULE, {proxies, Target}).
 
-ping(Peer) ->
-    gen_server:cast(?MODULE, {ping, Peer}).
+ack(Peer, Sequence) ->
+    gen_server:cast(?MODULE, {ack, Peer, Sequence}).
+
+nack(Peer, Sequence) ->
+    gen_server:cast(?MODULE, {nack, Peer, Sequence}).
 
 %% @private
 init([LocalMember, Opts]) ->
+    ProtocolPeriod = maps:get(protocol_period, Opts, 500),
+    SuspicionFactor = maps:get(suspicion_factor, Opts, 3),
+    Membership = swim_membership:new(LocalMember, ProtocolPeriod, SuspicionFactor),
     State =
         #state{
-           membership      = swim_membership:new(LocalMember),
+           membership      = Membership,
            ack_timeout     = maps:get(ack_timeout, Opts, 50),
-           protocol_period = maps:get(protocol_period, Opts, 500),
+           protocol_period = ProtocolPeriod,
            num_proxies     = maps:get(num_proxies, Opts, 3),
            sequence        = maps:get(sequence, Opts, 0)
           },
     self() ! protocol_period,
     {ok, State}.
-
 
 %% @private
 handle_call(local_member, _From, State) ->
@@ -91,20 +96,18 @@ handle_call(local_member, _From, State) ->
 handle_call(members, _From, State) ->
     #state{membership = Membership} = State,
     {reply, swim_membership:members(Membership), State};
+handle_call({proxies, Target}, _From, State) ->
+    Proxies = lists:sublist(
+                [M || {M, _I} <- ping_targets(State), M =/= Target],
+                State#state.num_proxies),
+    {reply, Proxies, State};
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
 %% @private
-handle_cast({ack, Peer, Incarnation}, State) ->
-    CurrentPing =
-        case State#state.current_ping =:= Peer of
-            true ->
-                undefined;
-            _ ->
-                State#state.current_ping
-        end,
+handle_cast({ack, Peer, Incarnation}, #state{current_ping = {Peer, _Inc}} = State) ->
     {_Events, Membership} = swim_membership:alive(Peer, Incarnation, State#state.membership),
-    {noreply, State#state{membership = Membership, current_ping = CurrentPing}};
+    {noreply, State#state{membership = Membership, current_ping = undefined}};
 handle_cast({ping, Peer}, State) ->
     {_Events, Membership} = swim_membership:alive(Peer, 0, State#state.membership),
     {noreply, State#state{membership = Membership}};
@@ -122,7 +125,7 @@ handle_cast(_Msg, State) ->
 %% @private
 handle_info(protocol_period, #state{sequence = Sequence} = State) ->
     NewState = handle_protocol_period(State),
-    ok = schedule_next_protocol_period(NewState),
+    _TRef = schedule_next_protocol_period(NewState),
     {noreply, NewState#state{sequence = Sequence + 1}};
 handle_info({suspicion_timeout, Member, SuspectedAt}, State) ->
     {_Events, Membership} =
@@ -141,8 +144,8 @@ terminate(_Reason, _State) ->
 
 handle_protocol_period(#state{current_ping = undefined} = State) ->
     send_next_ping(State);
-handle_protocol_period(#state{current_ping = Target} = State) ->
-    {_Events, Membership} = swim_membership:suspect(Target, State#state.membership),
+handle_protocol_period(#state{current_ping = {Target, Incarnation}} = State) ->
+    {_Events, Membership} = swim_membership:suspect(Target, Incarnation, State#state.membership),
     send_next_ping(State#state{current_ping = undefined, membership = Membership}).
 
 send_next_ping(#state{ping_targets = []} = State) ->
@@ -152,19 +155,16 @@ send_next_ping(#state{ping_targets = []} = State) ->
         PingTargets ->
             send_next_ping(State#state{ping_targets = PingTargets})
     end;
-send_next_ping(#state{ping_targets = [{PingTarget, Incarnation} | PingTargets]} = State) ->
-    #state{sequence = Sequence, ack_timeout = AckTimeout, num_proxies = NumProxies} = State,
-    Proxies = lists:sublist([M || {M, _I} <- ping_targets(State),
-                                  M /= PingTarget], NumProxies),
-    ok = swim_transport:ping(PingTarget, Incarnation, Sequence, Proxies, AckTimeout),
-    State#state{current_ping = PingTarget, ping_targets = PingTargets}.
+send_next_ping(#state{ping_targets = [{Target, _Inc} = CurrentPing | PingTargets]} = State) ->
+    #state{sequence = Sequence, ack_timeout = AckTimeout} = State,
+    ok = swim_failure:probe(Target, Sequence, AckTimeout),
+    State#state{current_ping = CurrentPing, ping_targets = PingTargets}.
 
 ping_targets(State) ->
     #state{membership = Membership} = State,
     Members = swim_membership:members(Membership),
-    [{M, I} || {_, {M, _S, I}} <- lists:keysort(1, [{rand_compat:uniform(), N} || N <- Members])].
+    [{M, I} || {_, {M, _S, I}} <- lists:keysort(1, [{rand:uniform(), N} || N <- Members])].
 
 schedule_next_protocol_period(State) ->
     #state{protocol_period = Timeout} = State,
-    _TRef = swim_time:send_after(Timeout, self(), protocol_period),
-    ok.
+    swim_time:send_after(Timeout, self(), protocol_period).

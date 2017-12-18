@@ -34,18 +34,12 @@
 
 -include("swim.hrl").
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 -export([new/3]).
 -export([local_member/1]).
 -export([members/1]).
 -export([size/1]).
 -export([alive/3]).
--export([suspect/2]).
 -export([suspect/3]).
--export([confirm/2]).
 -export([confirm/3]).
 -export([suspicion_timeout/3]).
 
@@ -164,9 +158,6 @@ alive(Member, Incarnation, Membership) ->
             {[], Membership}
     end.
 
-suspect(Member, Membership) ->
-    suspect(Member, current, Membership).
-
 %% @doc Set the member status to suspect
 %%
 %% If the member isn't already known we do nothing. If the member is known
@@ -221,17 +212,26 @@ suspect(Member, Incarnation, Membership) ->
             {[], Membership}
     end.
 
-suspicion_timeout(Member, SuspectedAt, Membership) ->
-    case maps:find(Member, Membership#membership.members) of
-        {ok, #{incarnation := CurrentIncarnation}}
-          when SuspectedAt =< CurrentIncarnation ->
-            confirm(Member, Membership);
-        _ ->
-            {[], Membership}
-    end.
+-spec suspicion_timeout(Member, SuspectedAt, Membership0) -> {Events, Membership} when
+      Member      :: member(),
+      SuspectedAt :: incarnation(),
+      Membership0 :: membership(),
+      Events      :: [membership_event()],
+      Membership  :: membership().
 
-confirm(Member, Membership) ->
-    confirm(Member, current, Membership).
+suspicion_timeout(Member, SuspectedAt, Membership) ->
+    #membership{members = CurrentMembers} = Membership,
+    {Events, NewMembers} =
+        case maps:find(Member, CurrentMembers) of
+            {ok, #{incarnation := CurrentIncarnation}}
+              when SuspectedAt < CurrentIncarnation ->
+                {[], CurrentMembers};
+            {ok, #{incarnation := CurrentIncarnation}} ->
+                {[{confirm, Member, CurrentIncarnation}], maps:remove(Member, CurrentMembers)};
+            _ ->
+                {[], CurrentMembers}
+        end,
+    {Events, Membership#membership{members = NewMembers}}.
 
 %% @doc Remove the member from the group
 %%
@@ -241,16 +241,15 @@ confirm(Member, Membership) ->
 %% @end
 -spec confirm(Member, Incarnation, Membership0) -> {Events, Membership} when
       Member      :: member(),
-      Incarnation :: incarnation(),
+      Incarnation :: current | incarnation(),
       Membership0 :: membership(),
       Events      :: [membership_event()],
       Membership  :: membership().
 
 confirm(Member, Incarnation, Membership)
-  when Member =:= Membership#membership.local_member andalso
-       is_integer(Incarnation) andalso Incarnation >= 0 ->
+  when Member =:= Membership#membership.local_member ->
     refute(Incarnation, Membership);
-confirm(Member, current, Membership) ->
+confirm(Member, _Incarnation, Membership) ->
     #membership{members = CurrentMembers} = Membership,
     case maps:take(Member, CurrentMembers) of
         {#{status := suspect, incarnation := Incarnation}, NewMembers} ->
@@ -258,21 +257,7 @@ confirm(Member, current, Membership) ->
              Membership#membership{members = NewMembers}};
         _ ->
             {[], Membership}
-    end;
-confirm(Member, Incarnation, Membership)
-  when is_integer(Incarnation) andalso Incarnation >= 0 ->
-    #membership{members = CurrentMembers} = Membership,
-    {Events, NewMembers} =
-        case maps:find(Member, CurrentMembers) of
-            {ok, #{incarnation := CurrentIncarnation}}
-              when Incarnation < CurrentIncarnation ->
-                {[], CurrentMembers};
-            {ok, #{incarnation := CurrentIncarnation}} ->
-                {[{confirm, Member, CurrentIncarnation}], maps:remove(Member, CurrentMembers)};
-            _ ->
-                {[], CurrentMembers}
-        end,
-    {Events, Membership#membership{members = NewMembers}}.
+    end.
 
 %% @private
 %% @doc The number of protocol periods between suspecting a member and considering it faulty

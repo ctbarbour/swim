@@ -167,7 +167,7 @@ do_dequeue(MaxSize, _MaxTransmissions, [], Broadcast, Keep) ->
 do_dequeue(MaxSize, MaxTransmissions, [NextEvent | Events] = E, Broadcast, Keep) ->
     {_Transmissions, Msg} = NextEvent,
     Wire = swim_messages:encode_event(Msg),
-    case MaxSize - size(Wire) of
+    case MaxSize - iolist_size(Wire) of
         NewSize when NewSize >= 0 ->
             NewBroadcast = [Wire | Broadcast],
             do_dequeue(NewSize, MaxTransmissions, Events, NewBroadcast,
