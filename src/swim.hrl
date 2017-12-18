@@ -20,11 +20,11 @@
 -type incarnation()       :: non_neg_integer().
 -type sequence()          :: non_neg_integer().
 -type user_event()        :: {user, any()}.
--type membership_event()  :: {membership, {member_status(), member(), incarnation()}}.
+-type membership_event()  :: {membership, {member_status(), incarnation(), member()}}.
 -type swim_event()        :: user_event() | membership_event().
 -type swim_message()      :: {ack, sequence(), member(), [swim_event()]} |
-                             {ping, sequence(), [swim_event()]} |
-                             {ping_req, sequence(), member()} |
-                             {leave, sequence()}.
+                             {nack, sequence(), member(), [swim_event()]} |
+                             {ping, sequence(), member(), [swim_event()]} |
+                             {ping_req, sequence(), member(), [swim_event()]}.
 -type key()               :: <<_:256>>.
 -type event_category()    :: user | membership.
