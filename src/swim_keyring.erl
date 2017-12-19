@@ -1,6 +1,7 @@
 -module(swim_keyring).
 
 -export([new/1]).
+-export([new/2]).
 -export([add/2]).
 -export([encrypt/2]).
 -export([decrypt/2]).
@@ -15,9 +16,12 @@
 -opaque keyring() :: #keyring{}.
 -export_type([keyring/0]).
 
-new(Keys)
+new(Keys) ->
+    new(Keys, ?AAD).
+
+new(Keys, AAD)
   when is_list(Keys) andalso Keys =/= [] ->
-    #keyring{keys = Keys, aad = ?AAD}.
+    #keyring{keys = Keys, aad = AAD}.
 
 add(Key, KeyRing)
   when is_binary(Key) andalso byte_size(Key) =:= 32 ->
