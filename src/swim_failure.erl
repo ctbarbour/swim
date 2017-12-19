@@ -23,8 +23,9 @@
 
 -include("swim.hrl").
 
--export([start_link/2]).
--export([probe/3]).
+-export([start_link/4]).
+-export([probe/2]).
+-export([probe/4]).
 
 -export([init/1]).
 -export([handle_call/3]).
@@ -34,30 +35,41 @@
 -export([terminate/2]).
 
 -record(state, {
-          local_member      :: member(),
-          probe             :: undefined | probe(),
-          ping_reqs = #{}   :: #{{member(), sequence()} => member()},
-          ping_req_timeout  :: timeout(),
-          socket            :: undefined | inet:socket(),
-          keyring           :: swim_keyring:keyring()
+          local_member       :: member(),
+          probe              :: undefined | probe(),
+          ping_reqs    = #{} :: #{{member(), sequence()} => {member(), sequence()}},
+          nack_timeout       :: non_neg_integer(),
+          ack_timeout        :: non_neg_integer(),
+          socket             :: undefined | inet:socket(),
+          keyring            :: swim_keyring:keyring(),
+          sequence     = 0   :: sequence()
          }).
 
 -record(probe, {
           target    :: member(),
           sequence  :: sequence(),
-          ack_timer :: reference()
+          ack_timer :: reference(),
+          ack_fun   :: fun((member()) -> ok),
+          nack_fun  :: fun((member()) -> ok)
          }).
 
 -type probe() :: #probe{}.
 
-start_link(ListenPort, Keyring) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [ListenPort, Keyring], []).
+start_link(ListenPort, Keyring, AckTimeout, NackTimeout) ->
+    Args = [ListenPort, Keyring, AckTimeout, NackTimeout],
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
-probe(Target, Sequence, Timeout) ->
-    gen_server:cast(?MODULE, {probe, Target, Sequence, Timeout}).
+probe(Target, Timeout) ->
+    AckFun = fun swim_state:ack/1,
+    NackFun = fun swim_state:nack/1,
+    probe(Target, Timeout, AckFun, NackFun).
+
+probe(Target, Timeout, AckFun, NackFun) ->
+    Msg = {probe, Target, Timeout, AckFun, NackFun},
+    gen_server:cast(?MODULE, Msg).
 
 %% @private
-init([ListenPort, Keyring, PingReqTimeout]) ->
+init([ListenPort, Keyring, AckTimeout, NackTimeout]) ->
     LocalMember = swim_state:local_member(),
     SocketOpts = [binary, inet, {active, 16}],
     {ok, Socket} = gen_udp:open(ListenPort, SocketOpts),
@@ -65,27 +77,33 @@ init([ListenPort, Keyring, PingReqTimeout]) ->
                local_member     = LocalMember,
                keyring          = Keyring,
                socket           = Socket,
-               ping_req_timeout = PingReqTimeout
+               nack_timeout     = NackTimeout,
+               ack_timeout      = AckTimeout
               },
     {ok, State}.
 
+%% @private
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 
 %% @private
-handle_cast({probe, Target, Sequence, AckTimeout}, State) ->
-    Msg = swim_messages:encode({ping, Sequence, Target, []}),
+handle_cast({probe, Target, AckTimeout, AckFun, NackFun}, State)
+  when State#state.probe =:= undefined ->
+    NextSequence = State#state.sequence + 1,
+    Msg = {ping, NextSequence, Target, []},
     case send(Target, Msg, State) of
         ok ->
             AckTimer = swim_time:send_after(AckTimeout, self(), ack_timeout),
             Probe = #probe{
                        target    = Target,
-                       sequence  = Sequence,
-                       ack_timer = AckTimer
+                       sequence  = NextSequence,
+                       ack_timer = AckTimer,
+                       ack_fun   = AckFun,
+                       nack_fun  = NackFun
                       },
-            State#state{probe = Probe};
+            {noreply, State#state{probe = Probe, sequence = NextSequence}};
         {error, _Reason} ->
-            State
+            {noreply, State}
     end;
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -96,17 +114,25 @@ handle_info({udp_passive, Socket}, #state{socket = Socket} = State) ->
     {noreply, State};
 handle_info({udp, Socket, Ip, InPortNo, Packet}, #state{socket = Socket} = State) ->
     {noreply, handle_packet(Packet, {Ip, InPortNo}, State)};
-handle_info(ack_timeout, #state{probe = undefined} = State) ->
-    {noreply, State};
-handle_info(ack_timeout, #state{probe = Probe} = State) ->
+handle_info({ack_timeout, Terminal, Sequence}, #state{probe = undefined} = State) ->
+    case maps:take({Terminal, Sequence}, State#state.ping_reqs) of
+        {{_Origin, _PingReqSequence}, PingReqs} ->
+            {noreply, State#state{ping_reqs = PingReqs}};
+        error ->
+            {noreply, State}
+    end;
+handle_info({ack_timeout, Target, Sequence}, #state{probe = Probe} = State)
+  when Probe#probe.target =:= Target andalso Probe#probe.sequence =:= Sequence ->
     _ = swim_time:cancel_timer(Probe#probe.ack_timer),
-    Msg = swim_messages:encode({ping_req, Probe#probe.sequence, Probe#probe.target, []}),
-    [send(Proxy, Msg, State) || Proxy <- swim_state:proxies(Probe#probe.target)],
+    Msg = {ping_req, Sequence, Probe#probe.target, []},
+    [send(Proxy, Msg, State) || Proxy <- swim_state:proxies(Target)],
     {noreply, State};
-handle_info({ping_req_timeout, Terminal, Sequence}, State) ->
-    case maps:find(Terminal, State#state.ping_reqs) of
-        {ok, Origin} ->
-            Msg = swim_messages:encode({nack, Sequence, Origin, []}),
+handle_info({ack_timeout, _Target, _Sequence}, State) ->
+    {noreply, State};
+handle_info({nack_timeout, Target, Sequence}, State) ->
+    case maps:find({Target, Sequence}, State#state.ping_reqs) of
+        {ok, {Origin, PingReqSequence}} ->
+            Msg = {nack, PingReqSequence, Origin, []},
             ok = send(Origin, Msg, State),
             {noreply, State};
         error ->
@@ -149,13 +175,14 @@ handle_message({ping_req, Sequence, Terminal, _Events}, Peer, State) ->
     handle_ping_req(Sequence, Terminal, Peer, State).
 
 handle_ack(Sequence, Responder, #state{probe = Probe} = State)
-  when Responder =:= Probe#probe.target ->
-    ok = swim_state:ack(Responder, Sequence),
+  when Responder =:= Probe#probe.target andalso Probe#probe.sequence =:= Sequence ->
+    #probe{ack_fun = AckFun} = Probe,
+    ok = AckFun(Responder),
     State#state{probe = undefined};
 handle_ack(Sequence, Responder, State) ->
     case maps:take(Responder, State#state.ping_reqs) of
         {Origin, ProxyPings} ->
-            Msg = swim_messages:encode({ack, Sequence, Responder, []}),
+            Msg = {ack, Sequence, Responder, []},
             ok = send(Origin, Msg, State),
             State#state{ping_reqs = ProxyPings};
         error ->
@@ -163,33 +190,43 @@ handle_ack(Sequence, Responder, State) ->
     end.
 
 handle_nack(Sequence, Responder, #state{probe = Probe} = State)
-  when Responder =:= Probe#probe.target ->
-    ok = swim_state:nack(Responder, Sequence),
+  when Responder =:= Probe#probe.target andalso Probe#probe.sequence =:= Sequence ->
+    #probe{nack_fun = NackFun} = Probe,
+    ok = NackFun(Responder),
     State;
 handle_nack(_Sequence, _Responder, State) ->
     State.
 
 handle_ping(Target, Sequence, Peer, #state{local_member = Target} = State) ->
-    Msg = swim_messages:encode({ack, Sequence, Target, []}),
+    Msg = {ack, Sequence, Target, []},
     _ = send(Peer, Msg, State),
     State;
 handle_ping(_Target, _Sequence, _Peer, State) ->
     State.
 
-handle_ping_req(Sequence, Terminal, Origin, State) ->
-    Msg = swim_messages:encode({ping, Sequence, Terminal, []}),
+handle_ping_req(PingReqSequence, Terminal, Origin, State) ->
+    NextSequence = State#state.sequence + 1,
+    Msg = {ping, NextSequence, Terminal, []},
     case send(Terminal, Msg, State) of
         ok ->
-            TimeoutContext = {ping_req_timeout, Terminal, Sequence},
-            _TRef = swim_time:send_after(State#state.ping_req_timeout, self(), TimeoutContext),
-            State#state{ping_reqs = maps:put(Terminal, Origin, State#state.ping_reqs)};
+            start_ack_timer(State#state.ack_timeout, Terminal, NextSequence),
+            start_nack_timer(State#state.nack_timeout, Terminal, NextSequence),
+            PingReqs = maps:put({Terminal, NextSequence}, {Origin, PingReqSequence},
+                                State#state.ping_reqs),
+            State#state{ping_reqs = PingReqs, sequence = NextSequence};
         {error, _Reason} ->
             State
     end.
 
 send({DestIp, DestPort}, Msg, State) ->
-    Payload = encrypt(Msg, State),
+    Payload = encrypt(swim_messages:encode(Msg), State),
     gen_udp:send(State#state.socket, DestIp, DestPort, Payload).
+
+start_ack_timer(Timeout, Terminal, Sequence) ->
+    swim_time:send_after(Timeout, self(), {ack_timeout, Terminal, Sequence}).
+
+start_nack_timer(Timeout, Terminal, Sequence) ->
+    swim_time:send_after(Timeout, self(), {nack_timeout, Terminal, Sequence}).
 
 encrypt(Msg, State) ->
     swim_keyring:encrypt(Msg, State#state.keyring).

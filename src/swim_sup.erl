@@ -28,20 +28,27 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    ListenIP = application:get_env(swim, ip, {127,0,0,1}),
+    ListenIP   = application:get_env(swim, ip, {127,0,0,1}),
     ListenPort = application:get_env(swim, port, 5000),
     LocalMember = {ListenIP, ListenPort},
-    Keyring = swim_keyring:new(get_key()),
+    AckTimeout = application:get_env(swim, ack_timeout, 60),
+    NackTimeout = application:get_env(swim, nack_timeout, 48),
+    StateOpts = #{
+      protocol_period  => application:get_env(swim, protocol_period, 500),
+      suspicion_factor => application:get_env(swim, suspicion_factor, 3),
+      ack_timeout      => AckTimeout
+     },
     State = #{id => state,
-              start => {swim_state, start_link, [LocalMember, #{}]}},
-    Network = #{id => network,
-                start => {swim_transport, start_link,
-                          [ListenPort, Keyring]}},
+              start => {swim_state, start_link, [LocalMember, StateOpts]}},
+    Keyring = swim_keyring:new(get_key()),
+    Failure = #{id => failure,
+                start => {swim_failure, start_link,
+                          [ListenPort, Keyring, AckTimeout, NackTimeout]}},
     Flags = #{strategy => rest_for_one,
               intensity => 5,
               period => 900
              },
-    {ok, {Flags, [State, Network]}}.
+    {ok, {Flags, [State, Failure]}}.
 
 read_key_file({ok, KeyFile}) ->
     {ok, EncodedKey} = file:read_file(KeyFile),

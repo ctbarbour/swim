@@ -28,9 +28,11 @@ prop_encryption() ->
                     begin
                         case is_symmetric(Keypair) of
                             true ->
-                                verify_encryption(Keypair, Message);
+                                aggregate([symmetric],
+                                          assert_encryption(Keypair, Message));
                             false ->
-                                refute_encryption(Keypair, Message)
+                                aggregate([asynmetric],
+                                          refute_encryption(Keypair, Message))
                         end
                     end)).
 
@@ -39,7 +41,7 @@ is_symmetric({Key, Key}) ->
 is_symmetric(_) ->
     false.
 
-verify_encryption({Key1, Key2}, Message) ->
+assert_encryption({Key1, Key2}, Message) ->
     Encrypted = swim_keyring:encrypt(Message, Key1),
     case swim_keyring:decrypt(Encrypted, Key2) of
         {ok, Message} ->

@@ -28,8 +28,8 @@
          precondition/2]).
 
 -type member_status() :: alive | suspect | faulty.
--type incarnation() :: non_neg_integer().
--type member() :: {inet:ip_address(), inet:port_number()}.
+-type incarnation()   :: non_neg_integer().
+-type member()        :: {inet:ip_address(), inet:port_number()}.
 
 -record(state, {
           me               :: member(),
