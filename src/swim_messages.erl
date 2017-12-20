@@ -55,9 +55,15 @@
 -export([encode_event/1]).
 -export([event_size_limit/0]).
 
--include("swim.hrl").
-
 -define(HEADER, 1).
+
+-type ack()          :: {ack, swim_failure:sequence(), swim:member()}.
+-type nack()         :: {nack, swim_failure:sequence(), swim:member()}.
+-type ping()         :: {ping, swim_failure:sequence(), swim:member()}.
+-type ping_req()     :: {ping_req, swim_failure:sequence(), swim:member()}.
+-type swim_message() :: ack() | nack() | ping() | ping_req().
+
+-export_type([swim_message/0]).
 
 %% @doc Event size limit determines the maximum size (in octets) available to
 %%      to piggyback membership and user events on an ACK or PING message.
@@ -75,15 +81,17 @@
 event_size_limit() ->
     452.
 
-encode({ack, Sequence, Member, Events}) ->
+encode({{ack, Sequence, Member}, Events}) ->
     [?HEADER, $a, <<Sequence:32/integer>>, encode_member(Member), encode_events(Events)];
-encode({nack, Sequence, Member, Events}) ->
+encode({{nack, Sequence, Member}, Events}) ->
     [?HEADER, $n, <<Sequence:32/integer>>, encode_member(Member), encode_events(Events)];
-encode({ping, Sequence, Member, Events}) ->
+encode({{ping, Sequence, Member}, Events}) ->
     [?HEADER, $p, <<Sequence:32/integer>>, encode_member(Member), encode_events(Events)];
-encode({ping_req, Sequence, Member, Events}) ->
+encode({{ping_req, Sequence, Member}, Events}) ->
     [?HEADER, $r, <<Sequence:32/integer>>, encode_member(Member), encode_events(Events)].
 
+encode_events([]) ->
+    [];
 encode_events(Events) ->
     L = length(Events),
     [<<L:8/integer>>, encode_es(Events)].
@@ -134,16 +142,14 @@ encode_es([Event | Events]) ->
 %%   </tr>
 %% </table>
 %% @end
--spec encode_event(Event) -> iolist() when
-      Event :: swim_event() | binary().
+-spec encode_event(Event) -> iolist() when Event :: swim:swim_event().
 
-encode_event({membership, {Status, Incarnation, Member}}) ->
-    Code = case Status of
-               alive   -> $a;
-               suspect -> $s;
-               faulty  -> $f
-           end,
-    [$m, Code, <<Incarnation:32/integer>>, encode_member(Member)];
+encode_event({membership, {suspect, Incarnation, Target, From}}) ->
+    [$m, $s, <<Incarnation:32/integer>>, encode_member(Target), encode_member(From)];
+encode_event({membership, {alive, Incarnation, Target}}) ->
+    [$m, $a, <<Incarnation:32/integer>>, encode_member(Target)];
+encode_event({membership, {faulty, Incarnation, Target, From}}) ->
+    [$m, $f, <<Incarnation:32/integer>>, encode_member(Target), encode_member(From)];
 encode_event({user, Bin}) when is_binary(Bin) ->
     [$u, <<(byte_size(Bin)):16/integer>>, Bin].
 
@@ -168,8 +174,7 @@ encode_event({user, Bin}) when is_binary(Bin) ->
 %%   <dd>is the associated Port Number the Member is listening on</dd>
 %% </dl>
 %% @end
--spec encode_member(Member) -> binary() when
-      Member :: member().
+-spec encode_member(Member) -> binary() when Member :: swim:member().
 
 encode_member({{A1, A2, A3, A4}, Port}) ->
     <<6, A1:8/integer, A2:8/integer, A3:8/integer, A4:8/integer, Port:16/integer>>;
@@ -187,16 +192,16 @@ encode_member({{A1, A2, A3, A4, A5, A6, A7, A8}, Port}) ->
 %% @end
 -spec decode(Packet) -> Result when
       Packet :: binary(),
-      Result :: swim_message() | no_return().
+      Result :: {swim_message(), [swim:swim_event()]} | no_return().
 
 decode(<<?HEADER/integer, $a, Sequence:32/integer, L:8, Member:L/binary, Events/binary>>) ->
-    {ack, Sequence, decode_member(Member), decode_events(Events)};
+    {{ack, Sequence, decode_member(Member)}, decode_events(Events)};
 decode(<<?HEADER/integer, $n, Sequence:32/integer, L:8, Member:L/binary, Events/binary>>) ->
-    {nack, Sequence, decode_member(Member), decode_events(Events)};
+    {{nack, Sequence, decode_member(Member)}, decode_events(Events)};
 decode(<<?HEADER/integer, $r, Sequence:32/integer, L:8, Member:L/binary, Events/binary>>) ->
-    {ping_req, Sequence, decode_member(Member), decode_events(Events)};
+    {{ping_req, Sequence, decode_member(Member)}, decode_events(Events)};
 decode(<<?HEADER/integer, $p, Sequence:32/integer, L:8, Member:L/binary, Events/binary>>) ->
-    {ping, Sequence, decode_member(Member), decode_events(Events)}.
+    {{ping, Sequence, decode_member(Member)}, decode_events(Events)}.
 
 decode_member(<<A1/integer, A2/integer, A3/integer, A4/integer, Port:16/integer>>) ->
     {{A1, A2, A3, A4}, Port};
@@ -205,17 +210,18 @@ decode_member(<<A1:16/integer, A2:16/integer, A3:16/integer, A4:16/integer,
                 Port:16/integer>>) ->
     {{A1, A2, A3, A4, A5, A6, A7, A8}, Port}.
 
+decode_events(<<>>) ->
+    [];
 decode_events(<<L:8, Events/binary>>) ->
     decode_es(L, Events).
 
 decode_es(0, <<>>) ->
     [];
-decode_es(K, <<$m, StatusCode:8/integer, Inc:32/integer, L:8, Member:L/binary, Events/binary>>) ->
-    Status = case StatusCode of
-                 $a -> alive;
-                 $s -> suspect;
-                 $f -> faulty
-             end,
-    [{membership, {Status, Inc, decode_member(Member)}} | decode_es(K - 1, Events)];
+decode_es(K, <<$m, $s, I:32/integer, L:8, T:L/binary, S:8, F:S/binary, Es/binary>>) ->
+    [{membership, {suspect, I, decode_member(T), decode_member(F)}} | decode_es(K - 1, Es)];
+decode_es(K, <<$m, $f, I:32/integer, L:8, T:L/binary, S:8, F:S/binary, Es/binary>>) ->
+    [{membership, {faulty, I, decode_member(T), decode_member(F)}} | decode_es(K - 1, Es)];
+decode_es(K, <<$m, $a, I:32/integer, L:8, T:L/binary, Es/binary>>) ->
+    [{membership, {alive, I, decode_member(T)}} | decode_es(K - 1, Es)];
 decode_es(K, <<$u, L:16/integer, Event:L/binary, Events/binary>>) ->
     [{user, Event} | decode_es(K - 1, Events)].

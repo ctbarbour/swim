@@ -11,18 +11,30 @@ ip_address() ->
           ]).
 
 port_number() ->
-    integer(0, 65535).
-
-member_status() ->
-    oneof([alive, suspect, faulty]).
+    range(0, 65535).
 
 incarnation() ->
-    integer(0, 1 bsl 32).
+    range(0, 1 bsl 32).
 
 membership_event() ->
-    ?LET({Status, Incarnation, Member},
-         {member_status(), incarnation(), member()},
-         {membership, {Status, Incarnation, Member}}).
+    ?LET(Event,
+         oneof([suspect_event(), alive_event(), faulty_event()]),
+         {membership, Event}).
+
+suspect_event() ->
+    ?LET({Incarnation, Member, From},
+         {incarnation(), member(), member()},
+         {suspect, Incarnation, Member, From}).
+
+alive_event() ->
+    ?LET({Incarnation, Member},
+         {incarnation(), member()},
+         {alive, Incarnation, Member}).
+
+faulty_event() ->
+    ?LET({Incarnation, Member, From},
+         {incarnation(), member(), member()},
+         {faulty, Incarnation, Member, From}).
 
 user_event() ->
     ?LET(Bin, binary(), {user, Bin}).
@@ -31,7 +43,7 @@ swim_event() ->
     oneof([user_event(), membership_event()]).
 
 sequence() ->
-    integer(0, 1 bsl 32).
+    range(0, 1 bsl 32).
 
 member() ->
     tuple([ip_address(), port_number()]).
@@ -46,19 +58,19 @@ swim_events(_Size) ->
 
 ack() ->
     ?LET({Seq, Target, Events}, {sequence(), member(), swim_events()},
-         {ack, Seq, Target, Events}).
+         {{ack, Seq, Target}, Events}).
 
 nack() ->
     ?LET({Seq, Target, Events}, {sequence(), member(), swim_events()},
-         {nack, Seq, Target, Events}).
+         {{nack, Seq, Target}, Events}).
 
 ping() ->
     ?LET({Seq, Target, Events}, {sequence(), member(), swim_events()},
-         {ping, Seq, Target, Events}).
+         {{ping, Seq, Target}, Events}).
 
 ping_req() ->
     ?LET({Seq, Target, Events}, {sequence(), member(), swim_events()},
-         {ping_req, Seq, Target, Events}).
+         {{ping_req, Seq, Target}, Events}).
 
 swim_message() ->
     oneof([ack(), ping(), ping_req(), nack()]).

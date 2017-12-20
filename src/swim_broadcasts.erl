@@ -48,44 +48,23 @@
 %%%
 %%% @end
 -module(swim_broadcasts).
--behavior(gen_event).
 
--export([max_transmissions/2, membership/2, user/2,
-         dequeue/2, dequeue/3]).
--export([init/1, handle_event/2, handle_call/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([new/1]).
+-export([insert/2]).
+-export([append/2]).
+-export([take/2]).
+-export([take/3]).
+-export([retransmit_limit/2]).
 
--include("swim.hrl").
+-type queue(E) :: [{non_neg_integer(), E}].
+-type broadcast() :: {non_neg_integer(), queue(swim:membership_event()), queue(swim:user_event())}.
+-export_type([broadcast/0]).
 
--type member_state() :: {member_status(), member(), incarnation()}.
--type event() :: {member_status(), member(), incarnation()} | term().
+new(RetransmitFactor) ->
+    {RetransmitFactor, [], []}.
 
--record(state, {
-          retransmit_factor = 4  :: pos_integer(),
-          membership_events = [] :: [{non_neg_integer(), member_state()}],
-          user_events       = [] :: [{non_neg_integer(), binary()}]
-         }).
-
-%% @doc Calculates the maximum number of times an event should be broadcast.
--spec max_transmissions(pos_integer(), pos_integer()) -> pos_integer().
-max_transmissions(NumMembers, RetransmitFactor) ->
-    round(math:log(NumMembers + 1)) * RetransmitFactor.
-
-%% @doc Queues a membership event to be broadcast to other members in the group
--spec membership(pid(), {member_status(), member(), incarnation()}) -> ok.
-membership(EventMgrPid, Event) ->
-    enqueue(EventMgrPid, membership, Event).
-
-%% @doc Queues a user event to be broadcast to other members in the group
--spec user(pid(), term()) -> ok.
-user(EventMgrPid, Event) ->
-    enqueue(EventMgrPid, user, Event).
-
-%% {@link dequeue/3}
--spec dequeue(pid(), pos_integer()) -> binary().
-dequeue(EventMgrPid, NumMembers) ->
-    MaxSize = swim_messages:event_size_limit(),
-    dequeue(EventMgrPid, NumMembers, MaxSize).
+retransmit_limit(NumMembers, {RetransmitFactor, _, _}) ->
+    round(math:log(NumMembers + 1)) + RetransmitFactor.
 
 %% @doc Dequeues a set of encoded events ready to be broadcast to other members
 %% in the group
@@ -103,83 +82,54 @@ dequeue(EventMgrPid, NumMembers) ->
 %% their retransmit limit are removed from the broadcasts. Events that are
 %% returned have their number of retransmissions incremented by 1.
 %% @end
--spec dequeue(pid() | module(), pos_integer(), pos_integer()) -> binary().
-dequeue(EventMgrPid, NumMembers, MaxSize) ->
-    gen_event:call(EventMgrPid, ?MODULE, {dequeue, MaxSize, NumMembers}).
 
--spec enqueue(pid() | module(), event_category(), event()) -> ok.
-enqueue(EventMgrPid, EventCategory, Event) ->
-    gen_event:notify(EventMgrPid, {EventCategory, Event}).
+take(Retransmits, {R, [{T, Event} | MembershipEvents0], UserEvents}) ->
+    MembershipEvents = maybe_keep(Retransmits, {T, Event}, MembershipEvents0),
+    {{membership, Event}, {R, MembershipEvents, UserEvents}};
+take(Retransmits, {R, [], [{T, Event} | UserEvents0]}) ->
+    UserEvents = maybe_keep(Retransmits, {T, Event}, UserEvents0),
+    {{user, Event}, {R, [], UserEvents}};
+take(_Retransmits, {_R, [], []}) ->
+    empty.
 
-%% @private
-init([]) ->
-    init([4]);
-init([RetransmitFactor]) ->
-    {ok, #state{retransmit_factor=RetransmitFactor}}.
+take(Max, Retransmits, Broadcasts) ->
+    lists:foldl(
+      fun(_, {A, B0}) ->
+              case take(Retransmits, B0) of
+                  {E, B1} ->
+                      {[E | A], B1};
+                  empty ->
+                      {A, B0}
+              end
+      end, {[], Broadcasts}, lists:seq(1, Max)).
 
-%% @private
-handle_event({user, Event}, State) ->
-    #state{user_events=Events} = State,
-    {ok, State#state{user_events=[{0, Event} | Events]}};
-handle_event({membership, {_Status, Member, _Inc} = Event}, State) ->
-    #state{membership_events=Events} = State,
-    FilteredEvents = lists:filter(fun({_, {_, M, _}}) ->
-                                          M /= Member
-                                  end, Events),
-    {ok, State#state{membership_events=[{0, Event}| FilteredEvents]}};
-handle_event(_, State) ->
-    {ok, State}.
-
-%% @private
-handle_call({dequeue, MaxSize, NumMembers}, State) ->
-    #state{membership_events=MEvents, retransmit_factor=RetransmitFactor,
-           user_events=UEvents} = State,
-    MaxTransmissions = max_transmissions(NumMembers, RetransmitFactor),
-    {SizeLeft, MBroadcast, MKeep} = do_dequeue(MaxSize, MaxTransmissions,
-                                               [{T, {membership, MB}} || {T, MB} <- MEvents]),
-    {_, UBroadcast, UKeep} = do_dequeue(SizeLeft, MaxTransmissions,
-                                        [{T, {user, UB}} || {T, UB} <- UEvents],
-                                        MBroadcast, []),
-    Broadcast = lists:foldl(fun(B, Acc) -> << B/binary, Acc/binary>> end, <<>>, UBroadcast),
-    {ok, Broadcast, State#state{membership_events=MKeep, user_events=UKeep}};
-handle_call(_, State) ->
-    {ok, State}.
-
-handle_info(_Info, State) ->
-    {ok, State}.
-
-%% @private
-terminate(_Reason, _State) ->
-    ok.
-
-%% @private
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
-
-%% @private
-do_dequeue(MaxSize, MaxTransmissions, Events) ->
-    SortedEvents = lists:keysort(1, Events),
-    do_dequeue(MaxSize, MaxTransmissions, SortedEvents, [], []).
-
-%% @private
-do_dequeue(MaxSize, _MaxTransmissions, [], Broadcast, Keep) ->
-    {MaxSize, Broadcast, Keep};
-do_dequeue(MaxSize, MaxTransmissions, [NextEvent | Events] = E, Broadcast, Keep) ->
-    {_Transmissions, Msg} = NextEvent,
-    Wire = swim_messages:encode_event(Msg),
-    case MaxSize - iolist_size(Wire) of
-        NewSize when NewSize >= 0 ->
-            NewBroadcast = [Wire | Broadcast],
-            do_dequeue(NewSize, MaxTransmissions, Events, NewBroadcast,
-                       maybe_keep(MaxTransmissions, NextEvent, Keep));
-        NewSize when NewSize < 0 ->
-            {0, Broadcast, lists:flatten([[{T, K} || {T, {_, K}} <- E] | Keep])}
+maybe_keep(Retransmits, {T0, Event}, Events0) ->
+    case T0 + 1 of
+        T when T >= Retransmits -> Events0;
+        T -> lists:sort([{T, Event} | Events0])
     end.
 
-%% @private
-maybe_keep(MaxTransmissions, {Transmissions, {_, _Msg}}, Keep)
-  when Transmissions + 1 >= MaxTransmissions ->
-    Keep;
-maybe_keep(MaxTransmissions, {Transmissions, {_, Msg}}, Keep)
-  when Transmissions + 1 < MaxTransmissions ->
-    [{Transmissions + 1, Msg} | Keep].
+append(Events, Broadcasts) when is_list(Events) ->
+    lists:foldl(fun insert/2, Broadcasts, Events).
+
+insert({membership, Event}, {R, MembershipEvents, UserEvents}) ->
+    {R, invalidate(Event, MembershipEvents), UserEvents};
+insert({user, Event}, {R, MembershipEvents, UserEvents}) ->
+    {R, MembershipEvents, [{0, Event} | UserEvents]};
+insert(Event, Broadcasts) ->
+    insert({membership, Event}, Broadcasts).
+
+-spec invalidate(Event, Events0) -> Events when
+      Event   :: swim:membership_event(),
+      Events0 :: [swim:membership_event()],
+      Events  :: [swim:membership_event()].
+
+invalidate({_, _, Member} = Event, Events) ->
+    invalidate(Member, Event, Events);
+invalidate({_, _, Member, _} = Event, Events) ->
+    invalidate(Member, Event, Events).
+
+invalidate(Member, Event, Events) ->
+    Filter = fun({_, {_, _, M}}) -> M =/= Member;
+                ({_, {_, _, M, _}}) -> M =/= Member end,
+    [{0, Event} | lists:filter(Filter, Events)].

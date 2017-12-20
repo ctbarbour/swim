@@ -22,8 +22,8 @@
 -import(swim_generators, [swim_message/0]).
 
 prop_encode_decode() ->
-    ?FORALL(Msg, swim_message(),
-            aggregate([element(1, Msg)], begin
+    ?FORALL({Type, _Events} = Msg, swim_message(),
+            aggregate([element(1, Type)], begin
                 Data = iolist_to_binary(swim_messages:encode(Msg)),
                 Msg =:= swim_messages:decode(Data)
             end)).

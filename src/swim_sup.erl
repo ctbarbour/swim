@@ -31,19 +31,20 @@ init([]) ->
     ListenIP   = application:get_env(swim, ip, {127,0,0,1}),
     ListenPort = application:get_env(swim, port, 5000),
     LocalMember = {ListenIP, ListenPort},
-    AckTimeout = application:get_env(swim, ack_timeout, 60),
     NackTimeout = application:get_env(swim, nack_timeout, 48),
+    RetransmitFactor = application:get_env(swim, retransmit_factor, 3),
+    Broadcasts = swim_broadcasts:new(RetransmitFactor),
     StateOpts = #{
       protocol_period  => application:get_env(swim, protocol_period, 500),
       suspicion_factor => application:get_env(swim, suspicion_factor, 3),
-      ack_timeout      => AckTimeout
+      ack_timeout      => application:get_env(swim, ack_timeout, 60)
      },
     State = #{id => state,
-              start => {swim_state, start_link, [LocalMember, StateOpts]}},
+              start => {swim_state, start_link, [LocalMember, Broadcasts, StateOpts]}},
     Keyring = swim_keyring:new(get_key()),
     Failure = #{id => failure,
                 start => {swim_failure, start_link,
-                          [ListenPort, Keyring, AckTimeout, NackTimeout]}},
+                          [ListenPort, Keyring, NackTimeout]}},
     Flags = #{strategy => rest_for_one,
               intensity => 5,
               period => 900
