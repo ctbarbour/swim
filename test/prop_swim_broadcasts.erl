@@ -19,96 +19,114 @@
 
 -include_lib("proper/include/proper.hrl").
 
--behavior(proper_statem).
+-compile([export_all]).
 
--export([command/1, initial_state/0, next_state/3, postcondition/3,
-         precondition/2]).
+-import(swim_generators, [swim_event/0]).
 
 -record(state, {
-          events = [] :: [],
-          retransmit_factor :: pos_integer()
+          events = [] :: {non_neg_integer(), swim:swim_event()},
+          pruned = [] :: swim:membership_event()
          }).
 
--define(RETRANSMIT_FACTOR, 5).
-
-g_member_status() ->
-    oneof([alive, suspect, faulty]).
-
-g_ip_address() ->
-    oneof([
-           tuple([integer(0, 255) || _ <- lists:seq(0, 3)]),
-           tuple([integer(0, 65535) || _ <- lists:seq(0, 7)])
-          ]).
-
-g_port_number() ->
-    integer(0, 65535).
-
-g_member() ->
-    tuple([g_ip_address(), g_port_number()]).
-
-g_incarnation() ->
-    integer(0, inf).
-
-g_membership_event() ->
-    ?LET(Event,
-         {g_member_status(), g_member(), g_incarnation()},
-         Event).
+g_retransmits() ->
+    ?LET({NumNumbers, RetransmitFactor}, {range(1, 10), exactly(3)},
+         swim_broadcasts:retransmit_limit(NumNumbers, RetransmitFactor)).
 
 initial_state() ->
-    #state{events=[], retransmit_factor=?RETRANSMIT_FACTOR}.
+    #state{events = [], pruned = []}.
 
 command(_State) ->
-    oneof([
-           {call, swim_broadcasts, membership, [{var, sut}, g_membership_event()]},
-           {call, swim_broadcasts, dequeue, [{var, sut}, pos_integer()]}
-          ]).
+    frequency([
+               {1, {call, ?MODULE, insert, [swim_event()]}},
+               {1, {call, ?MODULE, take, [range(1,5)]}},
+               {1, {call, ?MODULE, prune, [g_retransmits()]}}
+              ]).
 
+precondition(#state{events = []}, {call, ?MODULE, take, _}) ->
+    false;
+precondition(#state{events = []}, {call, ?MODULE, prune, _}) ->
+    false;
 precondition(_State, _Call) ->
     true.
 
-next_state(S, _V, {call, _Mod, membership, [_, Event]}) ->
-    #state{events=KnownEvents} = S,
-    S#state{events=[{0, Event} | KnownEvents]};
-next_state(S, _V, {call, _Mod, dequeue, [_, NumMembers]}) ->
-    #state{events=KnownEvents, retransmit_factor=RetransmitFactor} = S,
-    MaxTransmissions = swim_broadcasts:max_transmissions(NumMembers, RetransmitFactor),
-    NewEvents = lists:filtermap(
-                  fun({T, E}) ->
-                          case T + 1 of
-                              R when R >= MaxTransmissions ->
-                                  false;
-                              R when R < MaxTransmissions ->
-                                  {true, {R, E}}
-                          end
-                  end, KnownEvents),
-    S#state{events=NewEvents};
-next_state(S, _V, _Call) ->
-    S.
+next_state(State, _V, {call, ?MODULE, insert, [Event]}) ->
+    State#state{events = lists:sort(fun sort/2, [{0, Event} | State#state.events])};
+next_state(State, _V, {call, ?MODULE, take, [Max]}) ->
+    N = min(length(State#state.events), Max),
+    {Taken0, Rest} = lists:split(N, lists:sort(fun sort/2, State#state.events)),
+    Taken = [{T + 1, E} || {T, E} <- Taken0],
+    State#state{events = lists:sort(fun sort/2, Taken ++ Rest)};
+next_state(State, _V, {call, ?MODULE, prune, [Retransmit]}) ->
+    Partition = fun({T, _}) -> T < Retransmit end,
+    {Keep, Pruned0} = lists:partition(Partition, State#state.events),
+    Pruned = lists:foldl(fun({_, E}, Acc) -> [E | Acc] end, State#state.pruned, Pruned0),
+    State#state{events = lists:sort(fun sort/2, Keep), pruned = Pruned}.
 
-postcondition(_S, {call, _Mod, membership, _Args}, _R) ->
+postcondition(State, {call, ?MODULE, take, [_Max]}, Result) ->
+    Events = [E || {_, E} <- State#state.events],
+    lists:all(fun(M) -> lists:member(M, Events) end, Result);
+postcondition(_State, {call, ?MODULE, insert, [_Event]}, _Result) ->
     true;
-postcondition(S, {call, _Mod, dequeue, _Args}, Broadcasts) ->
-    #state{events=KnownEvents} = S,
-    D = [B || {membership, B} <- swim_messages:decode_events(Broadcasts)],
-    K = [E || {_T, E} <- KnownEvents],
-    case {ordsets:is_subset(ordsets:from_list(D), ordsets:from_list(K)),
-          size(Broadcasts) =< swim_messages:event_size_limit()} of
-        {true, true} ->
-            true;
-        _ ->
-            false
-    end.
+postcondition(_State, {call, ?MODULE, prune, [_Retransmit]}, _Result) ->
+    true.
 
 prop_swim_broadcasts() ->
     ?FORALL(Cmds, commands(?MODULE),
-            ?TRAPEXIT(
-               begin
-                   {ok, EventMgrPid} = gen_event:start_link(),
-                   ok = gen_event:add_sup_handler(EventMgrPid, swim_broadcasts,
-                                                  [?RETRANSMIT_FACTOR]),
-                   {H, S, R} = run_commands(?MODULE, Cmds, [{sut, EventMgrPid}]),
-                   ok = gen_event:stop(EventMgrPid),
-                   ?WHENFAIL(
-                      io:format("History: ~p~nState: ~p~nResult: ~p~n", [H, S, R]),
-                      aggregate(command_names(Cmds), R =:= ok))
-               end)).
+            begin
+                start_link(),
+                {H, S, R} = run_commands(?MODULE, Cmds),
+                stop(),
+                ?WHENFAIL(
+                   print_results(H, S, R),
+                   aggregate(command_names(Cmds), R =:= ok))
+            end).
+
+print_results(H, S, R) ->
+    io:format("History: ~p~nState: ~p~nResult:~p~n", [H, S, R]).
+
+sort({_, {user, _}}, {_, {membership, _}}) -> false;
+sort({_, {membership, _}}, {_, {user, _}}) -> true;
+sort(A, B) -> A =< B.
+
+take(Take) ->
+    gen_server:call(?MODULE, {take, Take}, 500).
+
+insert(Event) ->
+    gen_server:call(?MODULE, {insert, Event}, 500).
+
+prune(Retransmits) ->
+    gen_server:call(?MODULE, {prune, Retransmits}, 500).
+
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+stop() ->
+    gen_server:stop(?MODULE).
+
+init([]) ->
+    {ok, swim_broadcasts:new()}.
+
+handle_call({take, Max}, _From, Broadcasts0) ->
+    {Take, Broadcasts} = swim_broadcasts:take(Max, Broadcasts0),
+    {reply, Take, Broadcasts};
+handle_call({insert, Event}, _From, Broadcasts) ->
+    {reply, ok, swim_broadcasts:insert(Event, Broadcasts)};
+handle_call({prune, Num}, _From, Broadcasts) ->
+    {reply, ok, swim_broadcasts:prune(Num, Broadcasts)}.
+
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+pretty_print_commands([]) ->
+    [];
+pretty_print_commands([{_, _, {_, _, Fun, Args}} | Cmds]) ->
+    [{swim_broadcasts, Fun, Args} | pretty_print_commands(Cmds)].

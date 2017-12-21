@@ -29,7 +29,7 @@
 %%% as a part of the failure detection protocol. Thus, implementation
 %%% does not generate any extra packets to send membership updates.
 %%%
-%%% Here, `swim_broadcasts' maintains the buffer of recent membership
+%%% Here, `swim_broadcasts' maintains a buffer of recent membership
 %%% events along with a count for each event. The local count
 %%% specifies the number of times the event has been piggybacked so
 %%% far by this member and is used to choose which events to piggyback
@@ -46,78 +46,83 @@
 %%% propagate through the rest of the gossip group. Membership events are always
 %%% preferred over user-provided events.
 %%%
+%%% @TODO: Consider a more efficient implementation. We're sorting lists a lot.
+%%% We could potentially use a min-heap or priority queue but need to handle the requirement for
+%%% invalidating events about the same member. Consider
+%%% https://github.com/okeuday/pqueue/blob/master/src/pqueue4.erl
 %%% @end
 -module(swim_broadcasts).
 
--export([new/1]).
+-export([new/0]).
 -export([insert/2]).
--export([append/2]).
 -export([take/2]).
--export([take/3]).
+-export([prune/2]).
 -export([retransmit_limit/2]).
 
--type queue(E) :: [{non_neg_integer(), E}].
--type broadcast() :: {non_neg_integer(), queue(swim:membership_event()), queue(swim:user_event())}.
+-type queue(E)      :: [{non_neg_integer(), E}].
+-opaque broadcast() :: {non_neg_integer(),
+                        queue(swim:membership_event()),
+                        queue(swim:user_event())}.
 -export_type([broadcast/0]).
 
-new(RetransmitFactor) ->
-    {RetransmitFactor, [], []}.
+-spec new() -> Broadcast when Broadcast :: broadcast().
 
-retransmit_limit(NumMembers, {RetransmitFactor, _, _}) ->
+new() ->
+    {[], []}.
+
+-spec retransmit_limit(NumMembers, RetransmitFactor) -> Limit when
+      NumMembers       :: pos_integer(),
+      RetransmitFactor :: pos_integer(),
+      Limit            :: pos_integer().
+
+retransmit_limit(NumMembers, RetransmitFactor) ->
     round(math:log(NumMembers + 1)) + RetransmitFactor.
 
-%% @doc Dequeues a set of encoded events ready to be broadcast to other members
-%% in the group
+-spec take(Max, Broadcasts0) -> {Events, Broadcasts} when
+      Max         :: pos_integer(),
+      Broadcasts0 :: broadcast(),
+      Events      :: [swim:event()],
+      Broadcasts  :: broadcast().
+
+take(Max, {MembershipEvents0, UserEvents0}) ->
+    take(Max, MembershipEvents0, UserEvents0, {[], [], []}).
+
+take(0, MembershipEvents, UserEvents, {B, M, U}) ->
+    {B, {lists:sort(MembershipEvents ++ M), lists:sort(UserEvents ++ U)}};
+take(_K, [], [], {B, M, U}) ->
+    {B, {lists:sort(M), lists:sort(U)}};
+take(K, [{T, Event} | Events], UserEvents, {B, M, U}) ->
+    take(K - 1, Events, UserEvents, {[{membership, Event} | B], [{T + 1, Event} | M], U});
+take(K, [], [{T, Event} | Events], {B, M, U}) ->
+    take(K - 1, [], Events, {[{user, Event} | B], M, [{T + 1, Event} | U]}).
+
+-spec prune(Retransmits, Broadcasts0) -> Broadcasts when
+      Retransmits :: non_neg_integer(),
+      Broadcasts0 :: broadcast(),
+      Broadcasts  :: broadcast().
+
+prune(Retransmits, {MembershipEvents0, UserEvents0}) ->
+    Filter = fun({T, _}) -> T < Retransmits end,
+    MembershipEvents = lists:filter(Filter, MembershipEvents0),
+    UserEvents = lists:filter(Filter, UserEvents0),
+    {MembershipEvents, UserEvents}.
+
+%% @doc Insert an Event or list of Events to the Broadcast queue
 %%
-%% Events to be broadcast are determined by the number of the peers as well as
-%% the size limitation provided by `MaxSize'. Membership events always take
-%% precedence over user events. Events are broadcast up to a max of
-%% determined by {@link max_tranmissions/2}. If the number of events
-%% exceeds the maximum number of events allowable under `MaxSize', events that have
-%% been broadcast fewer times are preferred. This is needed as the rate of
-%% incoming events, i.e. membership changes, might temporarily overwhelm
-%% the speed of dissemination.
-%% Preferring younger events ensures that all events
-%% infect at least a few members. Events that have exceeded
-%% their retransmit limit are removed from the broadcasts. Events that are
-%% returned have their number of retransmissions incremented by 1.
+%% Upon inserting a Membership Event we invalidate any existing event about the same target member
+%% to prevent the brodcast of stale information.
 %% @end
+-spec insert(Events, Broadcasts0) -> Broadcasts when
+      Events      :: swim:swim_event() | [swim:swim_event()],
+      Broadcasts0 :: broadcast(),
+      Broadcasts  :: broadcast().
 
-take(Retransmits, {R, [{T, Event} | MembershipEvents0], UserEvents}) ->
-    MembershipEvents = maybe_keep(Retransmits, {T, Event}, MembershipEvents0),
-    {{membership, Event}, {R, MembershipEvents, UserEvents}};
-take(Retransmits, {R, [], [{T, Event} | UserEvents0]}) ->
-    UserEvents = maybe_keep(Retransmits, {T, Event}, UserEvents0),
-    {{user, Event}, {R, [], UserEvents}};
-take(_Retransmits, {_R, [], []}) ->
-    empty.
-
-take(Max, Retransmits, Broadcasts) ->
-    lists:foldl(
-      fun(_, {A, B0}) ->
-              case take(Retransmits, B0) of
-                  {E, B1} ->
-                      {[E | A], B1};
-                  empty ->
-                      {A, B0}
-              end
-      end, {[], Broadcasts}, lists:seq(1, Max)).
-
-maybe_keep(Retransmits, {T0, Event}, Events0) ->
-    case T0 + 1 of
-        T when T >= Retransmits -> Events0;
-        T -> lists:sort([{T, Event} | Events0])
-    end.
-
-append(Events, Broadcasts) when is_list(Events) ->
-    lists:foldl(fun insert/2, Broadcasts, Events).
-
-insert({membership, Event}, {R, MembershipEvents, UserEvents}) ->
-    {R, invalidate(Event, MembershipEvents), UserEvents};
-insert({user, Event}, {R, MembershipEvents, UserEvents}) ->
-    {R, MembershipEvents, [{0, Event} | UserEvents]};
-insert(Event, Broadcasts) ->
-    insert({membership, Event}, Broadcasts).
+insert(Events, Broadcasts) when is_list(Events) ->
+    lists:foldl(fun insert/2, Broadcasts, Events);
+insert({membership, Event}, {MembershipEvents, UserEvents}) ->
+    {invalidate(Event, MembershipEvents), UserEvents};
+insert({user, Event}, {MembershipEvents, UserEvents}) ->
+    {MembershipEvents, lists:sort([{0, Event} | UserEvents])}.
 
 -spec invalidate(Event, Events0) -> Events when
       Event   :: swim:membership_event(),
@@ -129,7 +134,13 @@ invalidate({_, _, Member} = Event, Events) ->
 invalidate({_, _, Member, _} = Event, Events) ->
     invalidate(Member, Event, Events).
 
+-spec invalidate(Member, Event, Events0) -> Events when
+      Member  :: swim:member(),
+      Event   :: swim:membership_event(),
+      Events0 :: [swim:membership_event()],
+      Events  :: [swim:membership_event()].
+
 invalidate(Member, Event, Events) ->
     Filter = fun({_, {_, _, M}}) -> M =/= Member;
                 ({_, {_, _, M, _}}) -> M =/= Member end,
-    [{0, Event} | lists:filter(Filter, Events)].
+    lists:sort([{0, Event} | lists:filter(Filter, Events)]).

@@ -118,7 +118,7 @@ handle_call(_Msg, _From, State) ->
 handle_cast({ack, Member}, #state{current_probe = {Member, Incarnation}} = State0) ->
     #state{membership = Membership0, broadcasts = Broadcasts0} = State0,
     {Events, Membership} = swim_membership:alive(Member, Incarnation, Membership0),
-    Broadcasts = swim_broadcasts:append(Events, Broadcasts0),
+    Broadcasts = swim_broadcasts:insert(Events, Broadcasts0),
     State = State0#state{
               membership = Membership,
               broadcasts = Broadcasts,
@@ -128,9 +128,9 @@ handle_cast({nack, Member}, #state{current_probe = {Member, _Incarnation}} = Sta
     {noreply, State};
 handle_cast({join, Seeds}, State) ->
     {noreply, handle_join(Seeds, State)};
-handle_cast({broadcast_event, {membership, Event}}, State) ->
+handle_cast({broadcast_event, Event}, State) ->
     {Events, Membership} = swim_membership:handle_event(Event, State#state.membership),
-    Broadcasts = swim_broadcasts:append(Events, State#state.broadcasts),
+    Broadcasts = swim_broadcasts:insert(Events, State#state.broadcasts),
     {noreply, State#state{membership = Membership, broadcasts = Broadcasts}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -143,7 +143,7 @@ handle_info(protocol_period, State) ->
 handle_info({suspicion_timeout, Member, SuspectedAt}, State) ->
     {Events, Membership} =
         swim_membership:suspicion_timeout(Member, SuspectedAt, State#state.membership),
-    Broadcasts = swim_broadcasts:append(Events, State#state.broadcasts),
+    Broadcasts = swim_broadcasts:insert(Events, State#state.broadcasts),
     {noreply, State#state{membership = Membership, broadcasts = Broadcasts}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -161,7 +161,7 @@ handle_protocol_period(#state{current_probe = undefined} = State) ->
 handle_protocol_period(#state{current_probe = {Target, Incarnation}} = State0) ->
     #state{membership = Membership0, broadcasts = Broadcasts0} = State0,
     {Events, Membership} = swim_membership:suspect(Target, Incarnation, local, Membership0),
-    Broadcasts = swim_broadcasts:append(Events, Broadcasts0),
+    Broadcasts = swim_broadcasts:insert(Events, Broadcasts0),
     State = State0#state{
               current_probe = undefined,
               membership = Membership,
@@ -194,7 +194,7 @@ handle_join(Seeds, State) ->
         lists:foldl(
           fun(Seed, {M0, B0}) ->
                   {Es, M} = swim_membership:alive(Seed, 0, M0),
-                  B = swim_broadcasts:append(Es, B0),
+                  B = swim_broadcasts:insert(Es, B0),
                   {M, B}
           end, {Membership0, swim_broadcasts:insert(JoinEvent, Broadcasts0)}, Seeds),
     State#state{membership = Membership, broadcasts = Broadcasts}.

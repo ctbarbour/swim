@@ -211,7 +211,7 @@ suspect(Member, Incarnation, From, Membership) ->
                          incarnation   = Incarnation,
                          last_modified = swim_time:monotonic_time()},
             NewMembers = maps:put(Member, NewState, CurrentMembers),
-            Events = [{suspect, Incarnation, Member, LocalMember}],
+            Events = [{membership, {suspect, Incarnation, Member, LocalMember}}],
             {Events, Membership#membership{members = NewMembers}};
         {ok, #mstate{status = alive} = MemberState}
           when Incarnation >= MemberState#mstate.incarnation ->
@@ -224,7 +224,7 @@ suspect(Member, Incarnation, From, Membership) ->
                         },
             faulty_after(Member, Incarnation, Membership),
             NewMembers = maps:put(Member, NewState, CurrentMembers),
-            Events = [{suspect, Incarnation, Member, LocalMember}],
+            Events = [{membership, {suspect, Incarnation, Member, LocalMember}}],
             {Events, Membership#membership{members = NewMembers}};
         _ ->
             {[], Membership}
@@ -245,7 +245,7 @@ suspicion_timeout(Member, SuspectedAt, Membership) ->
               when SuspectedAt < CurrentIncarnation ->
                 {[], CurrentMembers};
             {ok, #mstate{incarnation = CurrentIncarnation}} ->
-                {[{faulty, CurrentIncarnation, Member, LocalMember}],
+                {[{membership, {faulty, CurrentIncarnation, Member, LocalMember}}],
                  maps:remove(Member, CurrentMembers)};
             _ ->
                 {[], CurrentMembers}
@@ -276,7 +276,7 @@ faulty(Member, _Incarnation, _From, Membership) ->
     #membership{members = CurrentMembers, local_member = LocalMember, faulty = Faulty} = Membership,
     case maps:take(Member, CurrentMembers) of
         {#mstate{status = suspect, incarnation = Incarnation}, NewMembers} ->
-            {[{faulty, Incarnation, Member, LocalMember}],
+            {[{membership, {faulty, Incarnation, Member, LocalMember}}],
              Membership#membership{members = NewMembers,
                                    faulty = ordsets:add_element(Member, Faulty)}};
         _ ->
@@ -294,7 +294,7 @@ faulty_after(Member, Incarnation, Membership) ->
 refute(Incarnation, #membership{local_member = LocalMember} = Membership)
   when Incarnation >= Membership#membership.incarnation ->
     NewIncarnation = Incarnation + 1,
-    {[{alive, NewIncarnation, LocalMember}], Membership#membership{incarnation = NewIncarnation}};
+    {[{membership, {alive, NewIncarnation, LocalMember}}], Membership#membership{incarnation = NewIncarnation}};
 refute(Incarnation, #membership{incarnation = CurrentIncarnation} = Membership)
   when Incarnation < CurrentIncarnation ->
-    {[{alive, CurrentIncarnation, Membership#membership.local_member}], Membership}.
+    {[{{membership, alive, CurrentIncarnation, Membership#membership.local_member}}], Membership}.
