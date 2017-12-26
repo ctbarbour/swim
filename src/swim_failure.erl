@@ -169,7 +169,7 @@ handle_packet(Packet, Peer, State) ->
         {ok, PlainText} ->
             try
                 {Message, Events} = swim_messages:decode(PlainText),
-                swim_metrics:notify({swim, rx, iolist_size(Packet)}),
+                swim_metrics:notify({rx, iolist_size(Packet)}),
                 spawn_link(fun() -> handle_events(Events) end),
                 handle_message(Message, Peer, State)
             catch
@@ -233,9 +233,9 @@ handle_ping_req(OriginSequence, Terminal, Origin, State) ->
         ok ->
             NackTimer = start_nack_timer(State#state.nack_timeout, Terminal, NextSequence),
             AckTimer = start_ack_timer(State#state.ack_timeout, Terminal, NextSequence),
-            PingReqs = maps:put({Terminal, NextSequence},
-                                {Origin, OriginSequence, NackTimer, AckTimer},
-                                State#state.ping_reqs),
+            PingReq = #ping_req{origin = Origin, sequence = OriginSequence,
+                                ack_timer = AckTimer, nack_timer = NackTimer},
+            PingReqs = maps:put({Terminal, NextSequence}, PingReq, State#state.ping_reqs),
             State#state{ping_reqs = PingReqs, sequence = NextSequence};
         {error, _Reason} ->
             State
@@ -285,8 +285,14 @@ handle_events(Events) ->
 send({DestIp, DestPort}, Msg, State) ->
     Events = swim_state:broadcasts(3),
     Payload = encrypt(swim_messages:encode({Msg, Events}), State),
-    swim_metrics:notify({swim, tx, iolist_size(Payload)}),
-    gen_udp:send(State#state.socket, DestIp, DestPort, Payload).
+    timer:sleep(512),
+    case gen_udp:send(State#state.socket, DestIp, DestPort, Payload) of
+        ok ->
+            swim_metrics:notify({tx, iolist_size(Payload)}),
+            ok;
+        Err ->
+            Err
+    end.
 
 start_ack_timer(Timeout, Terminal, Sequence) ->
     swim_time:send_after(Timeout, self(), {ack_timeout, Terminal, Sequence}).

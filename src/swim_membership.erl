@@ -71,9 +71,9 @@
           timeout                    :: pos_integer()
          }).
 
--type state()     :: alive() | suspect().
--type alive()     :: #alive{}.
--type suspect()   :: #suspect{}.
+-type state()   :: alive() | suspect().
+-type alive()   :: #alive{}.
+-type suspect() :: #suspect{}.
 
 -opaque membership() :: #membership{}.
 -export_type([membership/0]).
@@ -81,9 +81,9 @@
 new(LocalMember, Alpha, Beta, ProtocolPeriod, SuspicionFactor) ->
     #membership{
        local_member     = LocalMember,
-       alpha = Alpha,
-       beta = Beta,
-       protocol_period = ProtocolPeriod,
+       alpha            = Alpha,
+       beta             = Beta,
+       protocol_period  = ProtocolPeriod,
        suspicion_factor = SuspicionFactor
       }.
 
@@ -213,7 +213,7 @@ suspect(Member, Incarnation, From, Membership) ->
     case maps:find(Member, CurrentMembers) of
         {ok, #suspect{suspecting = Suspecting, incarnation = CurrentIncarnation, k = K} = Suspect}
           when Incarnation >= CurrentIncarnation ->
-            case {ordsets:is_element(From, Suspecting), ordsets:size(Suspecting) =< K} of
+            case {ordsets:is_element(From, Suspecting), ordsets:size(Suspecting) < K} of
                 {false, true} ->
                     Elapsed = swim_time:cancel_timer(Suspect#suspect.tref),
                     Timeout = remaining_suspicion_time(Elapsed, Suspect),
@@ -262,6 +262,7 @@ remaining_suspicion_time(Remaining, Suspect) ->
     Elapsed = Total - Remaining,
     Frac = math:log(ordsets:size(Suspecting) + 1) / math:log(K + 1),
     Timeout = floor(max(Min, Max - (Max - Min) * Frac)),
+    ok = error_logger:info_msg("Suspicion Timeout: ~p, Min: ~p~n, Max: ~p~n", [Timeout - Elapsed, Min, Max]),
     Timeout - Elapsed.
 
 initial_suspicion_timeout(Membership) ->
@@ -278,6 +279,7 @@ initial_suspicion_timeout(Membership) ->
                   true -> Min;
                   false -> Max
               end,
+    ok = error_logger:info_msg("Suspicion Timeout: ~p, Min: ~p~n, Max: ~p~n", [Timeout, Min, Max]),
     {Min, Max, K, floor(Timeout)}.
 
 -spec suspicion_timeout(Member, SuspectedAt, Membership0) -> {Events, Membership} when
@@ -349,4 +351,4 @@ refute(Incarnation, #membership{local_member = LocalMember} = Membership)
      Membership#membership{incarnation = NewIncarnation}};
 refute(Incarnation, #membership{incarnation = CurrentIncarnation} = Membership)
   when Incarnation < CurrentIncarnation ->
-    {[{{membership, alive, CurrentIncarnation, Membership#membership.local_member}}], Membership}.
+    {[{membership, {alive, CurrentIncarnation, Membership#membership.local_member}}], Membership}.

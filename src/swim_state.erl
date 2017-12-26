@@ -21,7 +21,7 @@
 -module(swim_state).
 -behavior(gen_server).
 
--export([start_link/3]).
+-export([start_link/4]).
 -export([local_member/0]).
 -export([join/1]).
 -export([members/0]).
@@ -50,8 +50,8 @@
           awareness              :: swim_awareness:awareness()
          }).
 
-start_link(Membership, Broadcasts, Opts) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [Membership, Broadcasts, Opts], []).
+start_link(Membership, Broadcasts, Awareness, Opts) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [Membership, Broadcasts, Awareness, Opts], []).
 
 local_member() ->
     gen_server:call(?MODULE, local_member).

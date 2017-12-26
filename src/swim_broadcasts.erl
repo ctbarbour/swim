@@ -95,7 +95,7 @@ take(Max, #broadcast{members = MembershipEvents0, users = UserEvents0} = Broadca
 take(0, MembershipEvents, UserEvents, {B, M, U}) ->
     {B, lists:sort(MembershipEvents ++ M), lists:sort(UserEvents ++ U)};
 take(_K, [], [], {B, M, U}) ->
-    {B, {lists:sort(M), lists:sort(U)}};
+    {B, lists:sort(M), lists:sort(U)};
 take(K, [{T, Event} | Events], UserEvents, {B, M, U}) ->
     take(K - 1, Events, UserEvents, {[{membership, Event} | B], [{T + 1, Event} | M], U});
 take(K, [], [{T, Event} | Events], {B, M, U}) ->
