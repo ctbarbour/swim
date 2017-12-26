@@ -22,6 +22,7 @@
 -behavior(gen_server).
 
 -export([start_link/4]).
+-export([stop/0]).
 -export([probe/3]).
 -export([probe/4]).
 
@@ -75,6 +76,9 @@ start_link(ListenPort, Keyring, AckTimeout, NackTimeout) ->
     Args = [ListenPort, Keyring, AckTimeout, NackTimeout],
     gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
 
+stop() ->
+    gen_server:stop(?MODULE).
+
 -spec probe(Target, AckTimeout, ProbeTimeout) -> ok when
       Target       :: swim:member(),
       AckTimeout   :: pos_integer(),
@@ -98,7 +102,7 @@ probe(Target, AckTimeout, ProbeTimeout, AckFun)
 init([ListenPort, Keyring, AckTimeout, NackTimeout]) ->
     LocalMember = swim_state:local_member(),
     SocketOpts = [binary, {active, 16}],
-    {ok, Socket} = gen_udp:open(ListenPort, SocketOpts),
+    {ok, Socket} = swim_socket:open(ListenPort, SocketOpts),
     State = #state{
                local_member = LocalMember,
                keyring      = Keyring,
@@ -121,7 +125,7 @@ handle_cast(_Msg, State) ->
 
 %% @private
 handle_info({udp_passive, Socket}, #state{socket = Socket} = State) ->
-    ok = inet:setopts(Socket, [{active, 16}]),
+    ok = swim_socket:setopts(Socket, [{active, 16}]),
     {noreply, State};
 handle_info({udp, Socket, Ip, InPortNo, Packet}, #state{socket = Socket} = State) ->
     {noreply, handle_packet(Packet, {Ip, InPortNo}, State)};
@@ -142,7 +146,7 @@ code_change(_OldVsn, State, _Extra) ->
 terminate(_Reason, #state{socket = undefined}) ->
     ok;
 terminate(_Reason, #state{socket = Socket}) ->
-    gen_udp:close(Socket).
+    swim_socket:close(Socket).
 
 send_probe(Target, AckTimeout, ProbeTimeout, AckFun, State) ->
     NextSequence = State#state.sequence + 1,
@@ -285,8 +289,7 @@ handle_events(Events) ->
 send({DestIp, DestPort}, Msg, State) ->
     Events = swim_state:broadcasts(3),
     Payload = encrypt(swim_messages:encode({Msg, Events}), State),
-    timer:sleep(512),
-    case gen_udp:send(State#state.socket, DestIp, DestPort, Payload) of
+    case swim_socket:send(State#state.socket, DestIp, DestPort, Payload) of
         ok ->
             swim_metrics:notify({tx, iolist_size(Payload)}),
             ok;

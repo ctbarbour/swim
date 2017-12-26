@@ -18,21 +18,21 @@
 %%% @copyright 2015-2017
 %%% @version {@version}
 
--module(swim_time).
+-module(swim_socket).
 
--export([send_after/3]).
--export([cancel_timer/1]).
--export([cancel_timer/2]).
--export([monotonic_time/0]).
+-export([open/2]).
+-export([close/1]).
+-export([send/4]).
+-export([setopts/2]).
 
-send_after(Time, Dest, Msg) ->
-    erlang:send_after(Time, Dest, Msg).
+open(Port, Opts) ->
+    gen_udp:open(Port, Opts).
 
-cancel_timer(TRef) ->
-    erlang:cancel_timer(TRef).
+close(Socket) ->
+    gen_udp:close(Socket).
 
-cancel_timer(TRef, Options) ->
-    erlang:cancel_timer(TRef, Options).
+send(Socket, DestIp, DestPort, Payload) ->
+    gen_udp:send(Socket, DestIp, DestPort, Payload).
 
-monotonic_time() ->
-    erlang:monotonic_time().
+setopts(Socket, Opts) ->
+    inet:setopts(Socket, Opts).
