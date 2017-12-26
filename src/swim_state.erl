@@ -124,8 +124,13 @@ handle_cast({join, Seeds}, State) ->
     {noreply, handle_join(Seeds, State)};
 handle_cast({broadcast_event, Event}, State) ->
     {Events, Membership} = swim_membership:handle_event(Event, State#state.membership),
+    Awareness =
+        case swim_membership:refuted(Events, Membership) of
+            true -> swim_awareness:failure(State#state.awareness);
+            false -> State#state.awareness
+        end,
     Broadcasts = swim_broadcasts:insert(Events, State#state.broadcasts),
-    {noreply, State#state{membership = Membership, broadcasts = Broadcasts}};
+    {noreply, State#state{membership = Membership, broadcasts = Broadcasts, awareness = Awareness}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 

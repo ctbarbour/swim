@@ -37,6 +37,7 @@
 -export([local_member/1]).
 -export([members/1]).
 -export([size/1]).
+-export([refuted/2]).
 -export([alive/3]).
 -export([suspect/4]).
 -export([faulty/4]).
@@ -331,6 +332,14 @@ faulty(Member, _Incarnation, _From, Membership) ->
         _ ->
             {[], Membership}
     end.
+
+refuted([], _Membership) ->
+    false;
+refuted([{membership, {alive, _Inc, Member}} | _Events], Membership)
+  when Membership#membership.local_member =:= Member ->
+    true;
+refuted([_Event | Events], Membership) ->
+    refuted(Events, Membership).
 
 %% @private
 refute(Incarnation, #membership{local_member = LocalMember} = Membership)
