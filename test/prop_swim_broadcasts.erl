@@ -125,8 +125,3 @@ code_change(_OldVsn, State, _Extra) ->
 
 terminate(_Reason, _State) ->
     ok.
-
-pretty_print_commands([]) ->
-    [];
-pretty_print_commands([{_, _, {_, _, Fun, Args}} | Cmds]) ->
-    [{swim_broadcasts, Fun, Args} | pretty_print_commands(Cmds)].

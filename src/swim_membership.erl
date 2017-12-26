@@ -33,7 +33,7 @@
 
 -module(swim_membership).
 
--export([new/3]).
+-export([new/5]).
 -export([local_member/1]).
 -export([members/1]).
 -export([size/1]).
@@ -44,36 +44,45 @@
 -export([suspicion_timeout/3]).
 
 -record(membership, {
-          local_member             :: swim:member(),
-          incarnation        = 0   :: swim:incarnation(),
-          members            = #{} :: #{swim:member() := mstate()},
-          suspicion_factor         :: pos_integer(),
-          protocol_period          :: pos_integer(),
-          faulty   = ordsets:new() :: ordsets:ordset(swim:member())
+          local_member                      :: swim:member(),
+          incarnation       = 0             :: swim:incarnation(),
+          members           = #{}           :: #{swim:member() := state()},
+          faulty            = ordsets:new() :: ordsets:ordset(swim:member()),
+          alpha                             :: pos_integer(),
+          beta                              :: pos_integer(),
+          protocol_period                   :: pos_integer(),
+          suspicion_factor                  :: pos_integer()
          }).
 
--record(mstate, {
-          status                        :: swim:member_status(),
-          incarnation   = 0             :: swim:incarnation(),
-          last_modified                 :: integer(),
-          suspecting    = ordsets:new() :: ordsets:ordset(swim:member()),
-          suspicion_timer               :: undefined | reference()
+-record(alive, {
+          incarnation = 0 :: swim:incarnation(),
+          last_modified   :: integer()
          }).
 
--type mstate() :: #mstate{}.
+-record(suspect, {
+          incarnation                :: swim:incarnation(),
+          suspecting = ordsets:new() :: ordsets:ordset(swim:member()),
+          tref                       :: reference(),
+          last_modified              :: integer(),
+          min                        :: float(),
+          max                        :: float(),
+          k                          :: non_neg_integer(),
+          timeout                    :: pos_integer()
+         }).
+
+-type state()     :: alive() | suspect().
+-type alive()     :: #alive{}.
+-type suspect()   :: #suspect{}.
+
 -opaque membership() :: #membership{}.
 -export_type([membership/0]).
 
--spec new(LocalMember, ProtocolPeriod, SuspicionFactor) -> Membership when
-      LocalMember     :: swim:member(),
-      ProtocolPeriod  :: pos_integer(),
-      SuspicionFactor :: pos_integer(),
-      Membership      :: membership().
-
-new(LocalMember, ProtocolPeriod, SuspicionFactor) ->
+new(LocalMember, Alpha, Beta, ProtocolPeriod, SuspicionFactor) ->
     #membership{
        local_member     = LocalMember,
-       protocol_period  = ProtocolPeriod,
+       alpha = Alpha,
+       beta = Beta,
+       protocol_period = ProtocolPeriod,
        suspicion_factor = SuspicionFactor
       }.
 
@@ -102,8 +111,10 @@ local_member(#membership{local_member = LocalMember}) ->
 
 members(#membership{members = Members}) ->
     maps:fold(
-      fun(Member, #mstate{status = Status, incarnation = Incarnation}, Acc) ->
-              [{Member, Status, Incarnation} | Acc]
+      fun(Member, #alive{incarnation = Incarnation}, Acc) ->
+              [{Member, alive, Incarnation} | Acc];
+         (Member, #suspect{incarnation = Incarnation}, Acc) ->
+              [{Member, suspect, Incarnation} | Acc]
       end, [], Members).
 
 -spec handle_event(Event, Membership0) -> {Events, Membership} when
@@ -112,12 +123,14 @@ members(#membership{members = Members}) ->
       Events      :: [swim:membership_event()],
       Membership  :: membership().
 
-handle_event({alive, Incarnation, Member}, Membership) ->
+handle_event({membership, {alive, Incarnation, Member}}, Membership) ->
     alive(Member, Incarnation, Membership);
-handle_event({suspect, Incarnation, Member, From}, Membership) ->
+handle_event({membership, {suspect, Incarnation, Member, From}}, Membership) ->
     suspect(Member, Incarnation, From, Membership);
-handle_event({faulty, Incarnation, Member, From}, Membership) ->
-    faulty(Member, Incarnation, From, Membership).
+handle_event({membership, {faulty, Incarnation, Member, From}}, Membership) ->
+    faulty(Member, Incarnation, From, Membership);
+handle_event(_Event, Membership) ->
+    Membership.
 
 %% @doc Set the member status to alive
 %%
@@ -148,27 +161,20 @@ alive(Member, Incarnation, Membership) ->
     #membership{members = CurrentMembers} = Membership,
     case maps:find(Member, CurrentMembers) of
         error ->
-            State = #mstate{
-              status        = alive,
-              incarnation   = Incarnation,
-              last_modified = swim_time:monotonic_time()
-             },
+            State = #alive{incarnation = Incarnation,
+                           last_modified = swim_time:monotonic_time()},
             NewMembers = maps:put(Member, State, CurrentMembers),
-            Events = [{alive, Incarnation, Member}],
+            Events = [{membership, {alive, Incarnation, Member}}],
             {Events, Membership#membership{members = NewMembers}};
-        {ok, OldState}
-          when Incarnation > OldState#mstate.incarnation ->
-            case OldState#mstate.suspicion_timer of
-                undefined -> ok;
-                TRef -> swim_time:cancel_timer(TRef)
-            end,
-            MemberState = #mstate{
-              status        = alive,
+        {ok, #suspect{} = Suspect}
+          when Incarnation > Suspect#suspect.incarnation ->
+            swim_time:cancel_timer(Suspect#suspect.tref, [{async, true}, {info, false}]),
+            Alive = #alive{
               incarnation   = Incarnation,
               last_modified = swim_time:monotonic_time()
              },
-            NewMembers = maps:put(Member, MemberState, CurrentMembers),
-            Events = [{alive, Incarnation, Member}],
+            NewMembers = maps:put(Member, Alive, CurrentMembers),
+            Events = [{membership, {alive, Incarnation, Member}}],
             {Events, Membership#membership{members = NewMembers}};
         {ok, _MemberState} ->
             {[], Membership}
@@ -204,31 +210,74 @@ suspect(Member, Incarnation, local, Membership) ->
 suspect(Member, Incarnation, From, Membership) ->
     #membership{members = CurrentMembers, local_member = LocalMember} = Membership,
     case maps:find(Member, CurrentMembers) of
-        {ok, #mstate{status = suspect} = MemberState}
-          when Incarnation > MemberState#mstate.incarnation ->
-            NewState = MemberState#mstate{
-                         suspecting    = ordsets:add_element(From, MemberState#mstate.suspecting),
-                         incarnation   = Incarnation,
-                         last_modified = swim_time:monotonic_time()},
-            NewMembers = maps:put(Member, NewState, CurrentMembers),
-            Events = [{membership, {suspect, Incarnation, Member, LocalMember}}],
-            {Events, Membership#membership{members = NewMembers}};
-        {ok, #mstate{status = alive} = MemberState}
-          when Incarnation >= MemberState#mstate.incarnation ->
-            NewState = MemberState#mstate{
-                         status          = suspect,
-                         incarnation     = Incarnation,
-                         suspecting      = ordsets:add_element(From, MemberState#mstate.suspecting),
-                         suspicion_timer = faulty_after(Member, Incarnation, Membership),
-                         last_modified   = swim_time:monotonic_time()
+        {ok, #suspect{suspecting = Suspecting, incarnation = CurrentIncarnation, k = K} = Suspect}
+          when Incarnation >= CurrentIncarnation ->
+            case {ordsets:is_element(From, Suspecting), ordsets:size(Suspecting) =< K} of
+                {false, true} ->
+                    Elapsed = swim_time:cancel_timer(Suspect#suspect.tref),
+                    Timeout = remaining_suspicion_time(Elapsed, Suspect),
+                    TRef = start_timer(Timeout, Member, Incarnation),
+                    NewState = Suspect#suspect{
+                                 suspecting    = ordsets:add_element(From, Suspecting),
+                                 incarnation   = Incarnation,
+                                 tref          = TRef,
+                                 last_modified = swim_time:monotonic_time(),
+                                 timeout       = Timeout},
+                    NewMembers = maps:put(Member, NewState, CurrentMembers),
+                    Events = [{membership, {suspect, Incarnation, Member, From}}],
+                    {Events, Membership#membership{members = NewMembers}};
+                _ ->
+                    NewState = Suspect#suspect{incarnation = Incarnation,
+                                               last_modified = swim_time:monotonic_time()},
+                    NewMembers = maps:put(Member, NewState, CurrentMembers),
+                    {[], Membership#membership{members = NewMembers}}
+            end;
+        {ok, #alive{incarnation = CurrentIncarnation}}
+          when Incarnation >= CurrentIncarnation ->
+            {Min, Max, K, Timeout} = initial_suspicion_timeout(Membership),
+            TRef = start_timer(Timeout, Member, Incarnation),
+            NewState = #suspect{
+                          incarnation   = Incarnation,
+                          suspecting    = ordsets:from_list([From]),
+                          tref          = TRef,
+                          last_modified = swim_time:monotonic_time(),
+                          min           = Min,
+                          max           = Max,
+                          k             = K,
+                          timeout       = Timeout
                         },
-            faulty_after(Member, Incarnation, Membership),
             NewMembers = maps:put(Member, NewState, CurrentMembers),
             Events = [{membership, {suspect, Incarnation, Member, LocalMember}}],
             {Events, Membership#membership{members = NewMembers}};
         _ ->
             {[], Membership}
     end.
+
+start_timer(Timeout, Member, Incarnation) ->
+    swim_time:send_after(Timeout, self(), {suspicion_timeout, Member, Incarnation}).
+
+remaining_suspicion_time(Remaining, Suspect) ->
+    #suspect{suspecting = Suspecting, k = K, min = Min, max = Max, timeout = Total} = Suspect,
+    Elapsed = Total - Remaining,
+    Frac = math:log(ordsets:size(Suspecting) + 1) / math:log(K + 1),
+    Timeout = floor(max(Min, Max - (Max - Min) * Frac)),
+    Timeout - Elapsed.
+
+initial_suspicion_timeout(Membership) ->
+    N = maps:size(Membership#membership.members),
+    Min = Membership#membership.alpha * max(1, math:log(N)) * Membership#membership.protocol_period,
+    Max = Membership#membership.beta * Min,
+    % If there aren't enough members in the group excluding ourselves and the suspected member we
+    % won't expect any additional suspicions so we immediately set the timeout to Min.
+    K = case N < Membership#membership.suspicion_factor - 2 of
+            true -> 0;
+            false -> Membership#membership.suspicion_factor
+        end,
+    Timeout = case K < 1 of
+                  true -> Min;
+                  false -> Max
+              end,
+    {Min, Max, K, floor(Timeout)}.
 
 -spec suspicion_timeout(Member, SuspectedAt, Membership0) -> {Events, Membership} when
       Member      :: swim:member(),
@@ -239,18 +288,18 @@ suspect(Member, Incarnation, From, Membership) ->
 
 suspicion_timeout(Member, SuspectedAt, Membership) ->
     #membership{members = CurrentMembers, local_member = LocalMember, faulty = Faulty} = Membership,
-    {Events, NewMembers} =
-        case maps:find(Member, CurrentMembers) of
-            {ok, #mstate{incarnation = CurrentIncarnation}}
-              when SuspectedAt < CurrentIncarnation ->
-                {[], CurrentMembers};
-            {ok, #mstate{incarnation = CurrentIncarnation}} ->
-                {[{membership, {faulty, CurrentIncarnation, Member, LocalMember}}],
-                 maps:remove(Member, CurrentMembers)};
-            _ ->
-                {[], CurrentMembers}
-        end,
-    {Events, Membership#membership{members = NewMembers, faulty = ordsets:add_element(Member, Faulty)}}.
+    case maps:find(Member, CurrentMembers) of
+        {ok, #suspect{incarnation = CurrentIncarnation}}
+          when SuspectedAt < CurrentIncarnation ->
+            {[], Membership};
+        {ok, #suspect{incarnation = CurrentIncarnation}} ->
+            NewMembers = maps:remove(Member, CurrentMembers),
+            Events = [{membership, {faulty, CurrentIncarnation, Member, LocalMember}}],
+            {Events, Membership#membership{members = NewMembers,
+                                           faulty = ordsets:add_element(Member, Faulty)}};
+        _ ->
+            {[], Membership}
+    end.
 
 %% @doc Remove the member from the group
 %%
@@ -275,7 +324,7 @@ faulty(Member, Incarnation, local, Membership) ->
 faulty(Member, _Incarnation, _From, Membership) ->
     #membership{members = CurrentMembers, local_member = LocalMember, faulty = Faulty} = Membership,
     case maps:take(Member, CurrentMembers) of
-        {#mstate{status = suspect, incarnation = Incarnation}, NewMembers} ->
+        {#suspect{incarnation = Incarnation}, NewMembers} ->
             {[{membership, {faulty, Incarnation, Member, LocalMember}}],
              Membership#membership{members = NewMembers,
                                    faulty = ordsets:add_element(Member, Faulty)}};
@@ -284,17 +333,11 @@ faulty(Member, _Incarnation, _From, Membership) ->
     end.
 
 %% @private
-%% @doc The number of protocol periods between suspecting a member and considering it faulty
-faulty_after(Member, Incarnation, Membership) ->
-    After = round(math:log(maps:size(Membership#membership.members) + 2)) *
-        Membership#membership.suspicion_factor * Membership#membership.protocol_period,
-    erlang:send_after(After, self(), {suspicion_timeout, Member, Incarnation}).
-
-%% @private
 refute(Incarnation, #membership{local_member = LocalMember} = Membership)
   when Incarnation >= Membership#membership.incarnation ->
     NewIncarnation = Incarnation + 1,
-    {[{membership, {alive, NewIncarnation, LocalMember}}], Membership#membership{incarnation = NewIncarnation}};
+    {[{membership, {alive, NewIncarnation, LocalMember}}],
+     Membership#membership{incarnation = NewIncarnation}};
 refute(Incarnation, #membership{incarnation = CurrentIncarnation} = Membership)
   when Incarnation < CurrentIncarnation ->
     {[{{membership, alive, CurrentIncarnation, Membership#membership.local_member}}], Membership}.

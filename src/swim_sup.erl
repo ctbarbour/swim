@@ -28,28 +28,40 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    ListenIP   = application:get_env(swim, ip, {127,0,0,1}),
-    ListenPort = application:get_env(swim, port, 5000),
-    LocalMember = {ListenIP, ListenPort},
-    NackTimeout = application:get_env(swim, nack_timeout, 48),
-    RetransmitFactor = application:get_env(swim, retransmit_factor, 3),
-    Broadcasts = swim_broadcasts:new(RetransmitFactor),
+    ListenIP        = application:get_env(swim, ip, {127,0,0,1}),
+    ListenPort      = application:get_env(swim, port, 5000),
+    AckTimeout      = application:get_env(swim, ack_timeout, 100),
+    NackTimeout     = application:get_env(swim, nack_timeout, floor(AckTimeout * 0.8)),
+    ProbeTimeout    = application:get_env(swim, probe_timeout, 500),
+    ProtocolPeriod  = application:get_env(swim, protocol_period, 1000),
+    NumProxies      = application:get_env(swim, num_proxies, 3),
+    SuspicionFactor = application:get_env(swim, suspicion_factor, 3),
+    AwarenessCount  = application:get_env(swim, awareness_count, 8),
+    Alpha           = application:get_env(swim, alpha, 5),
+    Beta            = application:get_env(swim, beta, 1),
+    Broadcasts      = swim_broadcasts:new(),
+    LocalMember     = {ListenIP, ListenPort},
+    Membership      = swim_membership:new(LocalMember, Alpha, Beta, ProbeTimeout, SuspicionFactor),
     StateOpts = #{
-      protocol_period  => application:get_env(swim, protocol_period, 500),
-      suspicion_factor => application:get_env(swim, suspicion_factor, 3),
-      ack_timeout      => application:get_env(swim, ack_timeout, 60)
+      protocol_period  => ProtocolPeriod,
+      probe_timeout    => ProbeTimeout,
+      ack_timeout      => AckTimeout,
+      num_proxies      => NumProxies,
+      awareness_count  => AwarenessCount
      },
     State = #{id => state,
-              start => {swim_state, start_link, [LocalMember, Broadcasts, StateOpts]}},
+              start => {swim_state, start_link, [Membership, Broadcasts, StateOpts]}},
     Keyring = swim_keyring:new(get_key()),
     Failure = #{id => failure,
                 start => {swim_failure, start_link,
-                          [ListenPort, Keyring, NackTimeout]}},
+                          [ListenPort, Keyring, AckTimeout, NackTimeout]}},
+    Metrics = #{id => metrics,
+                start => {swim_metrics, start_link, []}},
     Flags = #{strategy => rest_for_one,
               intensity => 5,
               period => 900
              },
-    {ok, {Flags, [State, Failure]}}.
+    {ok, {Flags, [State, Failure, Metrics]}}.
 
 read_key_file({ok, KeyFile}) ->
     {ok, EncodedKey} = file:read_file(KeyFile),

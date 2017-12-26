@@ -20,6 +20,8 @@
 -export([join/1]).
 -export([members/0]).
 -export([myself/0]).
+-export([subscribe/0]).
+-export([unsubscribe/0]).
 
 -type member()           :: {inet:ip_address(), inet:port_number()}.
 -type incarnation()      :: non_neg_integer().
@@ -44,3 +46,9 @@ members() ->
 
 myself() ->
     swim_state:local_member().
+
+subscribe() ->
+    swim_metrics:subscribe(self()).
+
+unsubscribe() ->
+    swim_metrics:unsubscribe(self()).

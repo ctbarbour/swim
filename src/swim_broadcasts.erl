@@ -60,8 +60,7 @@
 -export([retransmit_limit/2]).
 
 -type queue(E)      :: [{non_neg_integer(), E}].
--opaque broadcast() :: {non_neg_integer(),
-                        queue(swim:membership_event()),
+-opaque broadcast() :: {queue(swim:membership_event()),
                         queue(swim:user_event())}.
 -export_type([broadcast/0]).
 
