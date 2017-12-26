@@ -29,8 +29,7 @@
          }).
 
 g_retransmits() ->
-    ?LET({NumNumbers, RetransmitFactor}, {range(1, 10), exactly(3)},
-         swim_broadcasts:retransmit_limit(NumNumbers, RetransmitFactor)).
+    range(1, 10).
 
 initial_state() ->
     #state{events = [], pruned = []}.
@@ -38,7 +37,7 @@ initial_state() ->
 command(_State) ->
     frequency([
                {1, {call, ?MODULE, insert, [swim_event()]}},
-               {1, {call, ?MODULE, take, [range(1,5)]}},
+               {1, {call, ?MODULE, take, [range(1,11)]}},
                {1, {call, ?MODULE, prune, [g_retransmits()]}}
               ]).
 
@@ -104,7 +103,7 @@ stop() ->
     gen_server:stop(?MODULE).
 
 init([]) ->
-    {ok, swim_broadcasts:new()}.
+    {ok, swim_broadcasts:new(3)}.
 
 handle_call({take, Max}, _From, Broadcasts0) ->
     {Take, Broadcasts} = swim_broadcasts:take(Max, Broadcasts0),

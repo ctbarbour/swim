@@ -21,39 +21,32 @@
 
 -behavior(proper_statem).
 
--define(SUT, swim_membership).
--define(LOCAL_MEMBER, {{127,0,0,1}, 5000}).
+-export([command/1]).
+-export([initial_state/0]).
+-export([next_state/3]).
+-export([postcondition/3]).
+-export([precondition/2]).
 
--export([command/1, initial_state/0, next_state/3, postcondition/3,
-         precondition/2]).
+-export([alive/2]).
+-export([suspect/3]).
+-export([faulty/3]).
+-export([members/0]).
 
--type member_status() :: alive | suspect | faulty.
--type incarnation()   :: non_neg_integer().
--type member()        :: {inet:ip_address(), inet:port_number()}.
+-export([start_link/1]).
+-export([init/1]).
+-export([handle_call/3]).
+-export([handle_cast/2]).
+-export([handle_info/2]).
+-export([code_change/3]).
+-export([terminate/2]).
+
+-import(swim_generators, [g_member/0, g_incarnation/0]).
 
 -record(state, {
-          me               :: member(),
-          incarnation = 0  :: incarnation(),
-          members     = [] :: [{member(), member_status(), incarnation()}]
+          me               :: swim:member(),
+          incarnation = 0  :: swim:incarnation(),
+          members     = [] :: [{swim:member(), alive | suspect | faulty, swim:incarnation()}]
          }).
-
-g_ipv4_address() ->
-    tuple([integer(0, 255) || _ <- lists:seq(0, 3)]).
-
-g_ipv6_address() ->
-    tuple([integer(0, 65535) || _ <- lists:seq(0, 7)]).
-
-g_ip_address() ->
-    oneof([g_ipv4_address(), g_ipv6_address()]).
-
-g_port_number() ->
-    integer(0, 65535).
-
-g_incarnation() ->
-    integer(0, inf).
-
-g_new_member() ->
-    {g_ip_address(), g_port_number()}.
 
 g_local_member(State) ->
     exactly(State#state.me).
@@ -67,106 +60,156 @@ g_existing_member(State) ->
     oneof([g_local_member(State), g_non_local_member(State)]).
 
 g_member(State) ->
-    frequency([{1, g_new_member()}] ++
+    frequency([{1, g_member()}] ++
                   [{3, g_existing_member(State)} || State#state.members /= []]).
 
 initial_state() ->
-    #state{me=?LOCAL_MEMBER}.
+    #state{me = {{127,0,0,1},5000}}.
 
 command(State) ->
     oneof([
-           {call, ?SUT, alive, [{var, sut}, g_member(State), g_incarnation()]},
-           {call, ?SUT, suspect, [{var, sut}, g_member(State), g_incarnation()]},
-           {call, ?SUT, faulty, [{var, sut}, g_member(State), g_incarnation()]},
-           {call, ?SUT, members, [{var, sut}]}
+           {call, ?MODULE, alive, [g_member(State), g_incarnation()]},
+           {call, ?MODULE, suspect, [g_member(State), g_incarnation(), g_member(State)]},
+           {call, ?MODULE, faulty, [g_member(State), g_incarnation(), g_member(State)]},
+           {call, ?MODULE, members, []}
           ]).
 
+precondition(_State, {call, ?MODULE, suspect, [Member, _Inc, Member]}) ->
+    false;
+precondition(_State, {call, ?MODULE, faulty, [Member, _Inc, Member]}) ->
+    false;
 precondition(_State, _Call) ->
     true.
 
-postcondition(S, {call, _Mod, members, _Args}, Members) ->
-    #state{members=KnownMembers} = S,
-    ordsets:subtract(ordsets:from_list(KnownMembers),
-                     ordsets:from_list(Members)) == [];
-postcondition(_State, {call, _Mod, _, _Args}, _R) ->
+postcondition(State, {call, ?MODULE, members, []}, Members) ->
+    ordsets:subtract(ordsets:from_list(State#state.members),
+                     ordsets:from_list(Members)) =:= [];
+postcondition(_State, {call, ?MODULE, alive, [_Member, _Inc]}, ok) ->
+    true;
+postcondition(_State, {call, ?MODULE, suspect, [_Member, _Inc, _From]}, ok) ->
+    true;
+postcondition(_State, {call, ?MODULE, faulty, [_Member, _Inc, _From]}, ok) ->
     true.
 
-next_state(S, _V, {call, _Mod, members, _Args}) ->
-    S;
-next_state(S, _V, {call, _Mod, alive, [_Pid, Member, Incarnation]}) ->
-    #state{members=KnownMembers, incarnation=LocalIncarnation} = S,
-    case S#state.me == Member of
+next_state(State, _V, {call, ?MODULE, members, []}) ->
+    State;
+next_state(State, _V, {call, ?MODULE, alive, [Member, Incarnation]}) ->
+    #state{members = KnownMembers, incarnation = LocalIncarnation} = State,
+    case State#state.me =:= Member of
         true ->
             case Incarnation > LocalIncarnation of
                 true ->
-                    S#state{incarnation=Incarnation + 1};
+                    State#state{incarnation = Incarnation + 1};
                 false ->
-                    S
+                    State
             end;
         false ->
             case lists:keytake(Member, 1, KnownMembers) of
                 false ->
                     NewMembers = [{Member, alive, Incarnation} | KnownMembers],
-                    S#state{members=NewMembers};
+                    State#state{members = NewMembers};
                 {value, {Member, _CurrentStatus, CurrentIncarnation}, Rest}
                   when Incarnation > CurrentIncarnation ->
                     NewMembers = [{Member, alive, Incarnation} | Rest],
-                    S#state{members=NewMembers};
+                    State#state{members = NewMembers};
                 _ ->
-                    S
+                    State
             end
     end;
-next_state(#state{me=Me} = S, _V, {call, _Mod, suspect, [_Pid, Me, Incarnation]}) ->
-    #state{incarnation=LocalIncarnation} = S,
-    case Incarnation >= LocalIncarnation of
+next_state(State, _V, {call, ?MODULE, suspect, [Member, Incarnation, _From]}) ->
+    case State#state.me =:= Member of
         true ->
-            S#state{incarnation=Incarnation + 1};
+            case Incarnation >= State#state.incarnation of
+                true ->
+                    State#state{incarnation = Incarnation + 1};
+                false ->
+                    State
+            end;
         false ->
-            S
+            case lists:keytake(Member, 1, State#state.members) of
+                false ->
+                    State;
+                {value, {Member, _CurrentStatus, CurrentIncarnation}, Rest}
+                  when Incarnation >= CurrentIncarnation ->
+                    NewMembers = [{Member, suspect, Incarnation} | Rest],
+                    State#state{members = NewMembers};
+                _ ->
+                    State
+            end
     end;
-next_state(S, _V, {call, _Mod, suspect, [_Pid, Member, Incarnation]}) ->
-    #state{members=KnownMembers} = S,
-    case lists:keytake(Member, 1, KnownMembers) of
-        false ->
-            S;
-        {value, {Member, _CurrentStatus, CurrentIncarnation}, Rest}
-          when Incarnation >= CurrentIncarnation ->
-            NewMembers = [{Member, suspect, Incarnation} | Rest],
-            S#state{members=NewMembers};
-        _ ->
-            S
-    end;
-next_state(#state{me=Me} = S, _V, {call, _Mod, faulty, [_, Me, Incarnation]}) ->
-    #state{incarnation=LocalIncarnation} = S,
-    case Incarnation >= LocalIncarnation of
+next_state(State, _V, {call, ?MODULE, faulty, [Member, Incarnation, _From]}) ->
+    case State#state.me =:= Member of
         true ->
-            S#state{incarnation=Incarnation + 1};
+            case Incarnation >= State#state.incarnation of
+                true ->
+                    State#state{incarnation = Incarnation + 1};
+                false ->
+                    State
+            end;
         false ->
-            S
-    end;
-next_state(S, _V, {call, _Mod, faulty, [_Pid, Member, Incarnation]}) ->
-    #state{members=KnownMembers} = S,
-    case lists:keytake(Member, 1, KnownMembers) of
-        false ->
-            S;
-        {value, {Member, _CurrentStatus, CurrentIncarnation}, Rest}
-          when Incarnation >= CurrentIncarnation ->
-            S#state{members=Rest};
-        _ ->
-            S
+            case lists:keytake(Member, 1, State#state.members) of
+                false ->
+                    State;
+                {value, {Member, _CurrentStatus, _CurrentIncarnation}, Rest} ->
+                    State#state{members = Rest};
+                _ ->
+                    State
+            end
     end.
 
 prop_membership() ->
     ?FORALL(Cmds, commands(?MODULE),
-            ?TRAPEXIT(
-               begin
-                   {ok, EventMgrPid} = gen_event:start_link(),
-                   {ok, Pid} = ?SUT:start_link(?LOCAL_MEMBER, EventMgrPid,
-                                               [{suspicion_factor, 1},
-                                                {protocol_period, 1}]),
-                   {_H, _S, R} = run_commands(?MODULE, Cmds, [{sut, Pid}]),
-                   ok = gen_event:stop(EventMgrPid),
-                   ?WHENFAIL(
-                      io:format("Result: ~p\n", [R]),
-                      aggregate(command_names(Cmds), R =:= ok))
-               end)).
+            begin
+                {ok, _} = start_link({{127,0,0,1}, 5000}),
+                {H, S, R} = run_commands(?MODULE, Cmds),
+                stop(),
+                ?WHENFAIL(
+                   io:format("History: ~p~nState: ~p~nResult: ~p~n", [H, S, R]),
+                   aggregate(command_names(Cmds), R =:= ok))
+            end).
+
+alive(Member, Incarnation) ->
+    gen_server:call(?MODULE, {alive, Member, Incarnation}).
+
+suspect(Member, Incarnation, From) ->
+    gen_server:call(?MODULE, {suspect, Member, Incarnation, From}).
+
+faulty(Member, Incarnation, From) ->
+    gen_server:call(?MODULE, {faulty, Member, Incarnation, From}).
+
+members() ->
+    gen_server:call(?MODULE, members).
+
+start_link(LocalMember) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [LocalMember], []).
+
+stop() ->
+    gen_server:stop(?MODULE).
+
+init([LocalMember]) ->
+    {ok, swim_membership:new(LocalMember, 5, 6, 500, 3)}.
+
+handle_call({alive, Member, Incarnation}, _, Membership0) ->
+    {_, Membership} = swim_membership:alive(Member, Incarnation, Membership0),
+    {reply, ok, Membership};
+handle_call({suspect, Member, Incarnation, From}, _, Membership0) ->
+    {_, Membership} = swim_membership:suspect(Member, Incarnation, From, Membership0),
+    {reply, ok, Membership};
+handle_call({faulty, Member, Incarnation, From}, _, Membership0) ->
+    {_, Membership} = swim_membership:faulty(Member, Incarnation, From, Membership0),
+    {reply, ok, Membership};
+handle_call(members, _, Membership) ->
+    {reply, swim_membership:members(Membership), Membership}.
+
+handle_cast(_Msg, Membership) ->
+    {noreply, Membership}.
+
+handle_info(_Info, Membership) ->
+    {noreply, Membership}.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+

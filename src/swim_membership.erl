@@ -159,14 +159,15 @@ alive(Member, Incarnation, Membership)
        Incarnation > Membership#membership.incarnation ->
     refute(Incarnation, Membership);
 alive(Member, Incarnation, Membership) ->
-    #membership{members = CurrentMembers} = Membership,
+    #membership{members = CurrentMembers, faulty = Faulty} = Membership,
     case maps:find(Member, CurrentMembers) of
         error ->
             State = #alive{incarnation = Incarnation,
                            last_modified = swim_time:monotonic_time()},
             NewMembers = maps:put(Member, State, CurrentMembers),
             Events = [{membership, {alive, Incarnation, Member}}],
-            {Events, Membership#membership{members = NewMembers}};
+            {Events, Membership#membership{members = NewMembers,
+                                           faulty = ordsets:del_element(Member, Faulty)}};
         {ok, #suspect{} = Suspect}
           when Incarnation > Suspect#suspect.incarnation ->
             swim_time:cancel_timer(Suspect#suspect.tref, [{async, true}, {info, false}]),
@@ -177,7 +178,12 @@ alive(Member, Incarnation, Membership) ->
             NewMembers = maps:put(Member, Alive, CurrentMembers),
             Events = [{membership, {alive, Incarnation, Member}}],
             {Events, Membership#membership{members = NewMembers}};
-        {ok, _MemberState} ->
+        {ok, #alive{incarnation = CurrentInc} = Alive0}
+          when Incarnation > CurrentInc ->
+            Alive = Alive0#alive{incarnation = Incarnation,
+                                last_modified = swim_time:monotonic_time()},
+            {[], Membership#membership{members = maps:put(Member, Alive, CurrentMembers)}};
+        {ok, _} ->
             {[], Membership}
     end.
 
@@ -262,7 +268,6 @@ remaining_suspicion_time(Remaining, Suspect) ->
     Elapsed = Total - Remaining,
     Frac = math:log(ordsets:size(Suspecting) + 1) / math:log(K + 1),
     Timeout = floor(max(Min, Max - (Max - Min) * Frac)),
-    ok = error_logger:info_msg("Suspicion Timeout: ~p, Min: ~p~n, Max: ~p~n", [Timeout - Elapsed, Min, Max]),
     Timeout - Elapsed.
 
 initial_suspicion_timeout(Membership) ->
@@ -279,7 +284,6 @@ initial_suspicion_timeout(Membership) ->
                   true -> Min;
                   false -> Max
               end,
-    ok = error_logger:info_msg("Suspicion Timeout: ~p, Min: ~p~n, Max: ~p~n", [Timeout, Min, Max]),
     {Min, Max, K, floor(Timeout)}.
 
 -spec suspicion_timeout(Member, SuspectedAt, Membership0) -> {Events, Membership} when
