@@ -78,17 +78,16 @@ handle_event(Event) ->
     gen_server:cast(?MODULE, {broadcast_event, Event}).
 
 %% @private
-init([Membership, Broadcasts, Opts]) ->
-    AwarenessCounter = maps:get(awareness_counter, Opts, 8),
+init([Membership, Broadcasts, Awareness, Opts]) ->
     State =
         #state{
            membership      = Membership,
            broadcasts      = Broadcasts,
+           awareness       = Awareness,
            ack_timeout     = maps:get(ack_timeout, Opts),
            probe_timeout   = maps:get(probe_timeout, Opts),
            protocol_period = maps:get(protocol_period, Opts),
-           num_proxies     = maps:get(num_proxies, Opts),
-           awareness       = swim_awareness:new(AwarenessCounter)
+           num_proxies     = maps:get(num_proxies, Opts)
           },
     self() ! protocol_period,
     {ok, State}.
@@ -109,7 +108,7 @@ handle_call({broadcasts, NumEvents}, _From, State) ->
     #state{membership = Membership, broadcasts = Broadcasts0} = State,
     NumMembers = swim_membership:size(Membership),
     {ToSend, Broadcasts1} = swim_broadcasts:take(NumEvents, Broadcasts0),
-    Retransmits = swim_broadcasts:retransmit_limit(NumMembers, 3),
+    Retransmits = swim_broadcasts:retransmit_limit(NumMembers, Broadcasts1),
     Broadcasts2 = swim_broadcasts:prune(Retransmits, Broadcasts1),
     {reply, ToSend, State#state{broadcasts = Broadcasts2}};
 handle_call(_Msg, _From, State) ->
@@ -209,7 +208,6 @@ handle_join(Seeds, State) ->
         lists:foldl(
           fun(Seed, {M0, B0}) ->
                   {Es, M} = swim_membership:alive(Seed, 0, M0),
-                  B = swim_broadcasts:insert(Es, B0),
-                  {M, B}
+                  {M, swim_broadcasts:insert(Es, B0)}
           end, {Membership0, swim_broadcasts:insert(JoinEvent, Broadcasts0)}, Seeds),
     State#state{membership = Membership, broadcasts = Broadcasts}.

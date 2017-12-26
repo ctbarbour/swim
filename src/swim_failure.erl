@@ -169,6 +169,7 @@ handle_packet(Packet, Peer, State) ->
         {ok, PlainText} ->
             try
                 {Message, Events} = swim_messages:decode(PlainText),
+                swim_metrics:notify({swim, rx, iolist_size(Packet)}),
                 spawn_link(fun() -> handle_events(Events) end),
                 handle_message(Message, Peer, State)
             catch
@@ -284,6 +285,7 @@ handle_events(Events) ->
 send({DestIp, DestPort}, Msg, State) ->
     Events = swim_state:broadcasts(3),
     Payload = encrypt(swim_messages:encode({Msg, Events}), State),
+    swim_metrics:notify({swim, tx, iolist_size(Payload)}),
     gen_udp:send(State#state.socket, DestIp, DestPort, Payload).
 
 start_ack_timer(Timeout, Terminal, Sequence) ->

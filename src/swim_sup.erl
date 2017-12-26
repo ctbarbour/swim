@@ -39,18 +39,19 @@ init([]) ->
     AwarenessCount  = application:get_env(swim, awareness_count, 8),
     Alpha           = application:get_env(swim, alpha, 5),
     Beta            = application:get_env(swim, beta, 1),
-    Broadcasts      = swim_broadcasts:new(),
+    Retransmits     = application:get_env(swim, retransmit_factor, 3),
+    Broadcasts      = swim_broadcasts:new(Retransmits),
     LocalMember     = {ListenIP, ListenPort},
+    Awareness       = swim_awareness:new(AwarenessCount),
     Membership      = swim_membership:new(LocalMember, Alpha, Beta, ProbeTimeout, SuspicionFactor),
     StateOpts = #{
       protocol_period  => ProtocolPeriod,
       probe_timeout    => ProbeTimeout,
       ack_timeout      => AckTimeout,
-      num_proxies      => NumProxies,
-      awareness_count  => AwarenessCount
+      num_proxies      => NumProxies
      },
     State = #{id => state,
-              start => {swim_state, start_link, [Membership, Broadcasts, StateOpts]}},
+              start => {swim_state, start_link, [Membership, Broadcasts, Awareness, StateOpts]}},
     Keyring = swim_keyring:new(get_key()),
     Failure = #{id => failure,
                 start => {swim_failure, start_link,

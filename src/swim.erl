@@ -22,6 +22,7 @@
 -export([myself/0]).
 -export([subscribe/0]).
 -export([unsubscribe/0]).
+-export([setup/0]).
 
 -type member()           :: {inet:ip_address(), inet:port_number()}.
 -type incarnation()      :: non_neg_integer().
@@ -52,3 +53,13 @@ subscribe() ->
 
 unsubscribe() ->
     swim_metrics:unsubscribe(self()).
+
+setup() ->
+    Key = base64:encode(crypto:strong_rand_bytes(32)),
+    BasePort = 5000,
+    Ms = lists:zip(
+           [{{127,0,0,1}, P} || P <- lists:seq(BasePort, length(nodes()) + BasePort)],
+           [node() | nodes()]),
+    [rpc:call(Node, application, set_env, [swim, port, Port]) || {{_, Port}, Node} <- Ms],
+    [rpc:call(Node, application, set_env, [swim, key, Key]) || Node <- [node() | nodes()]],
+    [rpc:call(Node, application, start, [swim]) || Node <- [node() | nodes()]].

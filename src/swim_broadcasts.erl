@@ -53,29 +53,34 @@
 %%% @end
 -module(swim_broadcasts).
 
--export([new/0]).
+-export([new/1]).
 -export([insert/2]).
 -export([take/2]).
 -export([prune/2]).
 -export([retransmit_limit/2]).
 
--type queue(E)      :: [{non_neg_integer(), E}].
--opaque broadcast() :: {queue(swim:membership_event()),
-                        queue(swim:user_event())}.
+-record(broadcast, {
+          members     = []  :: [{non_neg_integer(), swim:membership_event()}],
+          users       = []  :: [{non_neg_integer(), swim:user_event()}],
+          retransmits       :: pos_integer()
+         }).
+-opaque broadcast() :: #broadcast{}.
 -export_type([broadcast/0]).
 
--spec new() -> Broadcast when Broadcast :: broadcast().
+-spec new(Retransmits) -> Broadcast when
+      Retransmits :: pos_integer(),
+      Broadcast   :: broadcast().
 
-new() ->
-    {[], []}.
+new(Retransmits) ->
+    #broadcast{retransmits = Retransmits}.
 
--spec retransmit_limit(NumMembers, RetransmitFactor) -> Limit when
+-spec retransmit_limit(NumMembers, Broadcast) -> Limit when
       NumMembers       :: pos_integer(),
-      RetransmitFactor :: pos_integer(),
+      Broadcast        :: broadcast(),
       Limit            :: pos_integer().
 
-retransmit_limit(NumMembers, RetransmitFactor) ->
-    round(math:log(NumMembers + 1)) + RetransmitFactor.
+retransmit_limit(NumMembers, #broadcast{retransmits = Factor}) ->
+    round(math:log(NumMembers + 1)) + Factor.
 
 -spec take(Max, Broadcasts0) -> {Events, Broadcasts} when
       Max         :: pos_integer(),
@@ -83,11 +88,12 @@ retransmit_limit(NumMembers, RetransmitFactor) ->
       Events      :: [swim:event()],
       Broadcasts  :: broadcast().
 
-take(Max, {MembershipEvents0, UserEvents0}) ->
-    take(Max, MembershipEvents0, UserEvents0, {[], [], []}).
+take(Max, #broadcast{members = MembershipEvents0, users = UserEvents0} = Broadcast) ->
+    {B, M, U} = take(Max, MembershipEvents0, UserEvents0, {[], [], []}),
+    {B, Broadcast#broadcast{members = M, users = U}}.
 
 take(0, MembershipEvents, UserEvents, {B, M, U}) ->
-    {B, {lists:sort(MembershipEvents ++ M), lists:sort(UserEvents ++ U)}};
+    {B, lists:sort(MembershipEvents ++ M), lists:sort(UserEvents ++ U)};
 take(_K, [], [], {B, M, U}) ->
     {B, {lists:sort(M), lists:sort(U)}};
 take(K, [{T, Event} | Events], UserEvents, {B, M, U}) ->
@@ -100,11 +106,11 @@ take(K, [], [{T, Event} | Events], {B, M, U}) ->
       Broadcasts0 :: broadcast(),
       Broadcasts  :: broadcast().
 
-prune(Retransmits, {MembershipEvents0, UserEvents0}) ->
+prune(Retransmits, #broadcast{members = MembershipEvents0, users = UserEvents0} = Broadcast) ->
     Filter = fun({T, _}) -> T < Retransmits end,
     MembershipEvents = lists:filter(Filter, MembershipEvents0),
     UserEvents = lists:filter(Filter, UserEvents0),
-    {MembershipEvents, UserEvents}.
+    Broadcast#broadcast{members = MembershipEvents, users = UserEvents}.
 
 %% @doc Insert an Event or list of Events to the Broadcast queue
 %%
@@ -116,17 +122,17 @@ prune(Retransmits, {MembershipEvents0, UserEvents0}) ->
       Broadcasts0 :: broadcast(),
       Broadcasts  :: broadcast().
 
-insert(Events, Broadcasts) when is_list(Events) ->
-    lists:foldl(fun insert/2, Broadcasts, Events);
-insert({membership, Event}, {MembershipEvents, UserEvents}) ->
-    {invalidate(Event, MembershipEvents), UserEvents};
-insert({user, Event}, {MembershipEvents, UserEvents}) ->
-    {MembershipEvents, lists:sort([{0, Event} | UserEvents])}.
+insert(Events, Broadcast) when is_list(Events) ->
+    lists:foldl(fun insert/2, Broadcast, Events);
+insert({membership, Event}, #broadcast{members = MembershipEvents} = Broadcast) ->
+    Broadcast#broadcast{members = invalidate(Event, MembershipEvents)};
+insert({user, Event}, #broadcast{users = UserEvents} = Broadcast) ->
+    Broadcast#broadcast{users = lists:sort([{0, Event} | UserEvents])}.
 
 -spec invalidate(Event, Events0) -> Events when
       Event   :: swim:membership_event(),
-      Events0 :: [swim:membership_event()],
-      Events  :: [swim:membership_event()].
+      Events0 :: [{non_neg_integer(), swim:membership_event()}],
+      Events  :: [{non_neg_integer(), swim:membership_event()}].
 
 invalidate({_, _, Member} = Event, Events) ->
     invalidate(Member, Event, Events);
@@ -136,8 +142,8 @@ invalidate({_, _, Member, _} = Event, Events) ->
 -spec invalidate(Member, Event, Events0) -> Events when
       Member  :: swim:member(),
       Event   :: swim:membership_event(),
-      Events0 :: [swim:membership_event()],
-      Events  :: [swim:membership_event()].
+      Events0 :: [{non_neg_integer(), swim:membership_event()}],
+      Events  :: [{non_neg_integer(), swim:membership_event()}].
 
 invalidate(Member, Event, Events) ->
     Filter = fun({_, {_, _, M}}) -> M =/= Member;
