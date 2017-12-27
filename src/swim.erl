@@ -26,7 +26,7 @@
 
 -type member()           :: {inet:ip_address(), inet:port_number()}.
 -type incarnation()      :: non_neg_integer().
--type user_event()       :: any().
+-type user_event()       :: binary().
 -type membership_event() :: alive_event() | suspect_event() | faulty_event().
 -type suspect_event()    :: {suspect, incarnation(), member(), member()}.
 -type alive_event()      :: {alive, incarnation(), member()}.
@@ -43,7 +43,7 @@ join(Seed, LocalMember) ->
     swim_pushpull:join(Seed, LocalMember, #{}).
 
 members() ->
-    [M || {_S, _I, M} <- swim_state:members()].
+    [M || {M, _S, _I} <- swim_state:members()].
 
 myself() ->
     swim_state:local_member().

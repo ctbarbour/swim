@@ -13,8 +13,8 @@
 -export([terminate/2]).
 
 -record(state, {
-          socket,
-          transport
+          socket     :: inet:socket(),
+          transport  :: module()
          }).
 
 -define(DATA_MSG(Tag), Tag == tcp orelse Tag == ssl).

@@ -150,7 +150,8 @@ next_state(State, _V, {call, ?MODULE, faulty, [Member, Incarnation, _From]}) ->
             case lists:keytake(Member, 1, State#state.members) of
                 false ->
                     State;
-                {value, {Member, _CurrentStatus, _CurrentIncarnation}, Rest} ->
+                {value, {Member, _Status, CurrentIncarnation}, Rest}
+                  when Incarnation >= CurrentIncarnation ->
                     State#state{members = Rest};
                 _ ->
                     State
@@ -199,7 +200,8 @@ handle_call({faulty, Member, Incarnation, From}, _, Membership0) ->
     {_, Membership} = swim_membership:faulty(Member, Incarnation, From, Membership0),
     {reply, ok, Membership};
 handle_call(members, _, Membership) ->
-    {reply, swim_membership:members(Membership), Membership}.
+    Members = swim_membership:members(Membership),
+    {reply, Members, Membership}.
 
 handle_cast(_Msg, Membership) ->
     {noreply, Membership}.

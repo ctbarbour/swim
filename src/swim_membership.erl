@@ -35,21 +35,23 @@
 
 -export([new/5]).
 -export([local_member/1]).
--export([members/1]).
 -export([local_state/1]).
+-export([members/1]).
+-export([probe_target/1]).
+-export([proxies/3]).
 -export([size/1]).
 -export([refuted/2]).
 -export([alive/3]).
 -export([suspect/4]).
 -export([faulty/4]).
 -export([handle_event/2]).
--export([suspicion_timeout/3]).
 
 -record(membership, {
           local_member                      :: swim:member(),
           incarnation       = 0             :: swim:incarnation(),
           members           = #{}           :: #{swim:member() := state()},
           faulty            = ordsets:new() :: ordsets:ordset(swim:member()),
+          probe_targets     = []            :: [swim:member()],
           alpha                             :: pos_integer(),
           beta                              :: pos_integer(),
           protocol_period                   :: pos_integer(),
@@ -96,6 +98,17 @@ new(LocalMember, Alpha, Beta, ProtocolPeriod, SuspicionFactor) ->
 size(#membership{members = Members}) ->
     maps:size(Members) + 1.
 
+-spec members(Membership) -> Members when
+      Membership :: membership(),
+      Members    :: [{swim:member(), alive | suspect, swim:incarnation()}].
+
+members(#membership{members = Members}) ->
+    maps:fold(fun(Member, #alive{incarnation = Inc}, Acc) ->
+                      [{Member, alive, Inc} | Acc];
+                 (Member, #suspect{incarnation = Inc}, Acc) ->
+                      [{Member, suspect, Inc} | Acc]
+              end, [], Members).
+
 %% @doc The identifier for the local member
 -spec local_member(Membership) -> Member when
       Membership :: membership(),
@@ -103,6 +116,10 @@ size(#membership{members = Members}) ->
 
 local_member(#membership{local_member = LocalMember}) ->
     LocalMember.
+
+-spec local_state(Membership) -> Events when
+      Membership :: membership(),
+      Events     :: [swim:membership_event()].
 
 local_state(#membership{local_member = LocalMember, incarnation = Inc, members = Members}) ->
     [{membership, {alive, Inc, LocalMember}} |
@@ -113,20 +130,36 @@ local_state(#membership{local_member = LocalMember, incarnation = Inc, members =
                [{membership, {alive, Incarnation, Member}} | Acc]
        end, [], Members)].
 
-%% @doc A list of known members and their status
--spec members(Membership) -> [{Member, Status, Incarnation}] when
-      Membership  :: membership(),
-      Member      :: swim:member(),
-      Status      :: swim:member_status(),
-      Incarnation :: swim:incarnation().
+-spec probe_target(Membership0) -> none | {Target, Membership} when
+      Membership0 :: membership(),
+      Target      :: {swim:member(), swim:incarnation()},
+      Membership  :: membership().
 
-members(#membership{members = Members}) ->
-    maps:fold(
-      fun(Member, #alive{incarnation = Incarnation}, Acc) ->
-              [{alive, Incarnation, Member} | Acc];
-         (Member, #suspect{incarnation = Incarnation}, Acc) ->
-              [{suspect, Incarnation, Member} | Acc]
-      end, [], Members).
+probe_target(#membership{probe_targets = []} = Membership)
+  when map_size(Membership#membership.members) =:= 0 ->
+    none;
+probe_target(#membership{probe_targets = []} = Membership) ->
+    Members = maps:keys(Membership#membership.members),
+    Targets = [M || {_, M} <- lists:keysort(1, [{rand:uniform(), N} || N <- Members])],
+    probe_target(Membership#membership{probe_targets = Targets});
+probe_target(#membership{probe_targets = [T | Targets]} = Membership) ->
+    Target =
+        case maps:get(T, Membership#membership.members) of
+            #alive{incarnation = Inc} -> {T, Inc};
+            #suspect{incarnation = Inc} -> {T, Inc}
+        end,
+    {Target, Membership#membership{probe_targets = Targets}}.
+
+-spec proxies(Num, Target, Membership) -> Proxies when
+      Num        :: pos_integer(),
+      Target     :: swim:member(),
+      Membership :: membership(),
+      Proxies    :: [swim:member()].
+
+proxies(Num, Target, Membership) ->
+    Members = maps:keys(Membership#membership.members),
+    Targets = [M || {_, M} <- lists:keysort(1, [{rand:uniform(), N} || N <- Members]), M =/= Target],
+    lists:sublist(Targets, Num).
 
 -spec handle_event(Event, Membership0) -> {Events, Membership} when
       Event       :: swim:membership_event(),
@@ -174,10 +207,13 @@ alive(Member, Incarnation, Membership) ->
         error ->
             State = #alive{incarnation = Incarnation,
                            last_modified = swim_time:monotonic_time()},
-            NewMembers = maps:put(Member, State, CurrentMembers),
+            ProbeTargets = Membership#membership.probe_targets ++ [Member],
             Events = [{membership, {alive, Incarnation, Member}}],
-            {Events, Membership#membership{members = NewMembers,
-                                           faulty = ordsets:del_element(Member, Faulty)}};
+            NewMembers = maps:put(Member, State, CurrentMembers),
+            {Events, Membership#membership{
+                       members = NewMembers,
+                       probe_targets = ProbeTargets,
+                       faulty = ordsets:del_element(Member, Faulty)}};
         {ok, #suspect{} = Suspect}
           when Incarnation > Suspect#suspect.incarnation ->
             swim_time:cancel_timer(Suspect#suspect.tref, [{async, true}, {info, false}]),
@@ -191,7 +227,7 @@ alive(Member, Incarnation, Membership) ->
         {ok, #alive{incarnation = CurrentInc} = Alive0}
           when Incarnation > CurrentInc ->
             Alive = Alive0#alive{incarnation = Incarnation,
-                                last_modified = swim_time:monotonic_time()},
+                                 last_modified = swim_time:monotonic_time()},
             {[], Membership#membership{members = maps:put(Member, Alive, CurrentMembers)}};
         {ok, _} ->
             {[], Membership}
@@ -296,28 +332,6 @@ initial_suspicion_timeout(Membership) ->
               end,
     {Min, Max, K, floor(Timeout)}.
 
--spec suspicion_timeout(Member, SuspectedAt, Membership0) -> {Events, Membership} when
-      Member      :: swim:member(),
-      SuspectedAt :: swim:incarnation(),
-      Membership0 :: membership(),
-      Events      :: [swim:membership_event()],
-      Membership  :: membership().
-
-suspicion_timeout(Member, SuspectedAt, Membership) ->
-    #membership{members = CurrentMembers, local_member = LocalMember, faulty = Faulty} = Membership,
-    case maps:find(Member, CurrentMembers) of
-        {ok, #suspect{incarnation = CurrentIncarnation}}
-          when SuspectedAt < CurrentIncarnation ->
-            {[], Membership};
-        {ok, #suspect{incarnation = CurrentIncarnation}} ->
-            NewMembers = maps:remove(Member, CurrentMembers),
-            Events = [{membership, {faulty, CurrentIncarnation, Member, LocalMember}}],
-            {Events, Membership#membership{members = NewMembers,
-                                           faulty = ordsets:add_element(Member, Faulty)}};
-        _ ->
-            {[], Membership}
-    end.
-
 %% @doc Remove the member from the group
 %%
 %% If the member isn't already known we do nothing. If the member is known
@@ -338,12 +352,13 @@ faulty(Member, Incarnation, _From, Membership)
 faulty(Member, Incarnation, local, Membership) ->
     #membership{local_member = From} = Membership,
     faulty(Member, Incarnation, From, Membership);
-faulty(Member, _Incarnation, _From, Membership) ->
-    #membership{members = CurrentMembers, local_member = LocalMember, faulty = Faulty} = Membership,
-    case maps:take(Member, CurrentMembers) of
-        {#suspect{incarnation = Incarnation}, NewMembers} ->
-            {[{membership, {faulty, Incarnation, Member, LocalMember}}],
-             Membership#membership{members = NewMembers,
+faulty(Member, Incarnation, From, Membership) ->
+    #membership{members = CurrentMembers, faulty = Faulty} = Membership,
+    case maps:find(Member, CurrentMembers) of
+        {ok, #suspect{incarnation = CurrentIncarnation}}
+          when Incarnation >= CurrentIncarnation ->
+            {[{membership, {faulty, Incarnation, Member, From}}],
+             Membership#membership{members = maps:remove(Member, CurrentMembers),
                                    faulty = ordsets:add_element(Member, Faulty)}};
         _ ->
             {[], Membership}
