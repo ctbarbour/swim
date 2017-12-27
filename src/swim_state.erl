@@ -26,7 +26,7 @@
 -export([local_state/0]).
 -export([members/0]).
 -export([proxies/1]).
--export([broadcasts/1]).
+-export([broadcasts/2]).
 -export([ack/1]).
 -export([probe_timeout/2]).
 -export([handle_event/1]).
@@ -64,8 +64,8 @@ members() ->
 proxies(Target) ->
     gen_server:call(?MODULE, {proxies, Target}).
 
-broadcasts(NumEvents) ->
-    gen_server:call(?MODULE, {broadcasts, NumEvents}).
+broadcasts(Fun, InitAcc) ->
+    gen_server:call(?MODULE, {broadcasts, Fun, InitAcc}).
 
 ack(Member) ->
     gen_server:cast(?MODULE, {ack, Member}).
@@ -102,13 +102,13 @@ handle_call(local_state, _From, State) ->
 handle_call({proxies, Target}, _From, State) ->
     Proxies = swim_membership:proxies(State#state.num_proxies, Target, State#state.membership),
     {reply, Proxies, State};
-handle_call({broadcasts, NumEvents}, _From, State) ->
+handle_call({broadcasts, Fun, InitAcc}, _From, State) ->
     #state{membership = Membership, broadcasts = Broadcasts0} = State,
+    {Acc, Broadcasts1} = swim_broadcasts:takefold(Fun, InitAcc, Broadcasts0),
     NumMembers = swim_membership:size(Membership),
-    {ToSend, Broadcasts1} = swim_broadcasts:take(NumEvents, Broadcasts0),
     Retransmits = swim_broadcasts:retransmit_limit(NumMembers, Broadcasts1),
     Broadcasts2 = swim_broadcasts:prune(Retransmits, Broadcasts1),
-    {reply, ToSend, State#state{broadcasts = Broadcasts2}};
+    {reply, Acc, State#state{broadcasts = Broadcasts2}};
 handle_call(_Msg, _From, State) ->
     {noreply, State}.
 

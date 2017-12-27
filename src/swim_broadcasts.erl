@@ -57,6 +57,7 @@
 -export([insert/2]).
 -export([take/2]).
 -export([prune/2]).
+-export([takefold/3]).
 -export([retransmit_limit/2]).
 
 -record(broadcast, {
@@ -100,6 +101,34 @@ take(K, [{T, Event} | Events], UserEvents, {B, M, U}) ->
     take(K - 1, Events, UserEvents, {[{membership, Event} | B], [{T + 1, Event} | M], U});
 take(K, [], [{T, Event} | Events], {B, M, U}) ->
     take(K - 1, [], Events, {[{user, Event} | B], M, [{T + 1, Event} | U]}).
+
+-spec takefold(Fun, InitAcc, Broadcast0) -> {Acc, Broadcast} when
+      Fun        :: fun((swim:membership_event() | swim:user_event(), InitAcc) -> Acc),
+      InitAcc    :: any(),
+      Acc        :: InitAcc,
+      Broadcast0 :: broadcast(),
+      Broadcast  :: broadcast().
+
+takefold(Fun, InitAcc, #broadcast{members = Members, users = Users} = Broadcast) ->
+    {Acc, M, U} = takefold(Fun, Members, Users, {InitAcc, [], []}),
+    {Acc, Broadcast#broadcast{members = M, users = U}}.
+
+takefold(_Fun, [], [], {Acc, M, U}) ->
+    {Acc, lists:sort(M), lists:sort(U)};
+takefold(Fun, [{T, E} | Members], Users, {Acc0, M, U}) ->
+    case Fun({membership, E}, Acc0) of
+        {take, Acc} ->
+            takefold(Fun, Members, Users, {Acc, [{T + 1, E} | M], U});
+        skip ->
+            takefold(Fun, Members, Users, {Acc0, M, [{T, E} | U]})
+    end;
+takefold(Fun, [], [{T, E} | Users], {Acc0, M, U}) ->
+    case Fun({user, E}, Acc0) of
+        {take, Acc} ->
+            takefold(Fun, [], Users, {Acc, M, [{T + 1, E} | U]});
+        skip ->
+            takefold(Fun, [], Users, {Acc0, M, [{T, E} | U]})
+    end.
 
 -spec prune(Retransmits, Broadcasts0) -> Broadcasts when
       Retransmits :: non_neg_integer(),

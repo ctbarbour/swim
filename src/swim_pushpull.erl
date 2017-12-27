@@ -1,7 +1,7 @@
 -module(swim_pushpull).
 -behavior(gen_server).
 
--export([join/3]).
+-export([join/2]).
 
 -export([start_link/4]).
 
@@ -21,7 +21,8 @@
 -define(ERROR_MSG(Tag), Tag == tcp_error orelse Tag == ssl_error).
 -define(CLOSED_MSG(Tag), Tag == tcp_closed orelse Tag == ssl_closed).
 
-join(Member, LocalMember, Opts) ->
+join(Member, Opts) ->
+    LocalMember = swim_state:local_member(),
     Transport = case maps:get(transport, Opts, tcp) of
                     tcp -> ranch_tcp;
                     ssl -> ranch_ssl

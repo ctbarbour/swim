@@ -8,15 +8,14 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, Port} = application:get_env(swim, pushpull_port),
+    {ok, Port} = application:get_env(swim, port),
     RanchSupSpec = #{id => ranch_sup,
                      start => {ranch_sup, start_link, []},
                      restart => permanent,
                      shutdown => 5000,
                      type => supervisor,
                      modules => [ranch_sup]},
-    Opts = [{port, Port}, {active, false}, {reuseaddr, true}, {nodelay, true},
-            {packet, 4}, {mode, binary}],
+    Opts = [{port, Port}, {packet, 4}],
     ListenerSpec = ranch:child_spec(swim_pushpull, ranch_tcp, Opts, swim_pushpull, []),
     Flags = #{strategy => one_for_one,
               intensity => 10,

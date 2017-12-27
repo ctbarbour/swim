@@ -55,7 +55,7 @@ init([]) ->
     Keyring = swim_keyring:new(get_key()),
     Failure = #{id => failure,
                 start => {swim_failure, start_link,
-                          [ListenPort, Keyring, AckTimeout, NackTimeout]}},
+                          [LocalMember, Keyring, AckTimeout, NackTimeout]}},
     PushPull = #{id => pushpull,
                  start => {swim_pushpull_sup, start_link, []}},
     Metrics = #{id => metrics,
