@@ -56,13 +56,15 @@ init([]) ->
     Failure = #{id => failure,
                 start => {swim_failure, start_link,
                           [ListenPort, Keyring, AckTimeout, NackTimeout]}},
+    PushPull = #{id => pushpull,
+                 start => {swim_pushpull_sup, start_link, []}},
     Metrics = #{id => metrics,
                 start => {swim_metrics, start_link, []}},
     Flags = #{strategy => rest_for_one,
               intensity => 5,
               period => 900
              },
-    {ok, {Flags, [State, Failure, Metrics]}}.
+    {ok, {Flags, [State, Failure, PushPull, Metrics]}}.
 
 read_key_file({ok, KeyFile}) ->
     {ok, EncodedKey} = file:read_file(KeyFile),

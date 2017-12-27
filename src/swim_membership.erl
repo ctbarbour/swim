@@ -36,6 +36,7 @@
 -export([new/5]).
 -export([local_member/1]).
 -export([members/1]).
+-export([local_state/1]).
 -export([size/1]).
 -export([refuted/2]).
 -export([alive/3]).
@@ -103,6 +104,15 @@ size(#membership{members = Members}) ->
 local_member(#membership{local_member = LocalMember}) ->
     LocalMember.
 
+local_state(#membership{local_member = LocalMember, incarnation = Inc, members = Members}) ->
+    [{membership, {alive, Inc, LocalMember}} |
+     maps:fold(
+       fun(Member, #suspect{incarnation = Incarnation}, Acc) ->
+               [{membership, {suspect, Incarnation, Member, LocalMember}} | Acc];
+          (Member, #alive{incarnation = Incarnation}, Acc) ->
+               [{membership, {alive, Incarnation, Member}} | Acc]
+       end, [], Members)].
+
 %% @doc A list of known members and their status
 -spec members(Membership) -> [{Member, Status, Incarnation}] when
       Membership  :: membership(),
@@ -113,9 +123,9 @@ local_member(#membership{local_member = LocalMember}) ->
 members(#membership{members = Members}) ->
     maps:fold(
       fun(Member, #alive{incarnation = Incarnation}, Acc) ->
-              [{Member, alive, Incarnation} | Acc];
+              [{alive, Incarnation, Member} | Acc];
          (Member, #suspect{incarnation = Incarnation}, Acc) ->
-              [{Member, suspect, Incarnation} | Acc]
+              [{suspect, Incarnation, Member} | Acc]
       end, [], Members).
 
 -spec handle_event(Event, Membership0) -> {Events, Membership} when
@@ -131,7 +141,7 @@ handle_event({membership, {suspect, Incarnation, Member, From}}, Membership) ->
 handle_event({membership, {faulty, Incarnation, Member, From}}, Membership) ->
     faulty(Member, Incarnation, From, Membership);
 handle_event(_Event, Membership) ->
-    Membership.
+    {[], Membership}.
 
 %% @doc Set the member status to alive
 %%

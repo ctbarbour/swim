@@ -17,7 +17,7 @@
 
 -module(swim).
 
--export([join/1]).
+-export([join/2]).
 -export([members/0]).
 -export([myself/0]).
 -export([subscribe/0]).
@@ -39,11 +39,11 @@
 -export_type([user_event/0]).
 -export_type([membership_event/0]).
 
-join(Seeds) ->
-    swim_state:join(Seeds).
+join(Seed, LocalMember) ->
+    swim_pushpull:join(Seed, LocalMember, #{}).
 
 members() ->
-    swim_state:members().
+    [M || {_S, _I, M} <- swim_state:members()].
 
 myself() ->
     swim_state:local_member().

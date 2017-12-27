@@ -23,8 +23,8 @@
 
 -export([start_link/4]).
 -export([local_member/0]).
--export([join/1]).
 -export([members/0]).
+-export([local_state/0]).
 -export([proxies/1]).
 -export([broadcasts/1]).
 -export([ack/1]).
@@ -59,14 +59,14 @@ local_member() ->
 members() ->
     gen_server:call(?MODULE, members).
 
+local_state() ->
+    gen_server:call(?MODULE, local_state).
+
 proxies(Target) ->
     gen_server:call(?MODULE, {proxies, Target}).
 
 broadcasts(NumEvents) ->
     gen_server:call(?MODULE, {broadcasts, NumEvents}).
-
-join(Seeds) ->
-    gen_server:cast(?MODULE, {join, Seeds}).
 
 ack(Member) ->
     gen_server:cast(?MODULE, {ack, Member}).
@@ -96,6 +96,8 @@ init([Membership, Broadcasts, Awareness, Opts]) ->
 handle_call(local_member, _From, State) ->
     #state{membership = Membership} = State,
     {reply, swim_membership:local_member(Membership), State};
+handle_call(local_state, _From, State) ->
+    {reply, swim_membership:local_state(State#state.membership), State};
 handle_call(members, _From, State) ->
     #state{membership = Membership} = State,
     {reply, swim_membership:members(Membership), State};
@@ -119,8 +121,6 @@ handle_cast({ack, Member}, #state{current_probe = {Member, Incarnation}} = State
     {noreply, handle_ack(Member, Incarnation, State)};
 handle_cast({probe_timeout, Member, MissedNacks}, State) ->
     {noreply, handle_probe_timeout(Member, MissedNacks, State)};
-handle_cast({join, Seeds}, State) ->
-    {noreply, handle_join(Seeds, State)};
 handle_cast({broadcast_event, Event}, State) ->
     {Events, Membership} = swim_membership:handle_event(Event, State#state.membership),
     Awareness =
@@ -194,20 +194,9 @@ handle_protocol_period(#state{probe_targets = [{Target, _Inc} = Probe | ProbeTar
 
 probe_targets(State) ->
     Members = swim_membership:members(State#state.membership),
-    [{M, I} || {_, {M, _S, I}} <- lists:keysort(1, [{rand:uniform(), N} || N <- Members])].
+    [{M, I} || {_, {_S, I, M}} <- lists:keysort(1, [{rand:uniform(), N} || N <- Members])].
 
 schedule_next_protocol_period(State) ->
     #state{awareness = Awareness, protocol_period = ProtocolPeriod} = State,
     Timeout = swim_awareness:scale(ProtocolPeriod, Awareness),
     swim_time:send_after(Timeout, self(), protocol_period).
-
-handle_join(Seeds, State) ->
-    #state{membership = Membership0, broadcasts = Broadcasts0} = State,
-    JoinEvent = {membership, {alive, 0, swim_membership:local_member(Membership0)}},
-    {Membership, Broadcasts} =
-        lists:foldl(
-          fun(Seed, {M0, B0}) ->
-                  {Es, M} = swim_membership:alive(Seed, 0, M0),
-                  {M, swim_broadcasts:insert(Es, B0)}
-          end, {Membership0, swim_broadcasts:insert(JoinEvent, Broadcasts0)}, Seeds),
-    State#state{membership = Membership, broadcasts = Broadcasts}.
