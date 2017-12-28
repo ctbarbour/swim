@@ -29,6 +29,7 @@
 -export([accept/3]).
 -export([recv/3]).
 -export([send/2]).
+-export([peername/1]).
 
 open(Port, Opts) ->
     gen_udp:open(Port, Opts).
@@ -113,3 +114,8 @@ send({tcp, Socket}, Data) ->
     gen_tcp:send(Socket, Data);
 send({ssl, Socket}, Data) ->
     ssl:send(Socket, Data).
+
+peername({tcp, Socket}) ->
+    inet:peername(Socket);
+peername({ssl, Socket}) ->
+    ssl:peername(Socket).
