@@ -3,7 +3,8 @@
 
 -export([join/2]).
 
--export([start_link/4]).
+-export([start_link/3]).
+-export([accept/3]).
 
 -export([init/1]).
 -export([handle_call/3]).
@@ -13,28 +14,22 @@
 -export([terminate/2]).
 
 -record(state, {
-          socket     :: inet:socket(),
-          transport  :: module()
+          socket    :: inet:socket() | ssl:socket(),
+          acceptors :: ets:tab(),
+          opts      :: maps:map()
          }).
-
--define(DATA_MSG(Tag), Tag == tcp orelse Tag == ssl).
--define(ERROR_MSG(Tag), Tag == tcp_error orelse Tag == ssl_error).
--define(CLOSED_MSG(Tag), Tag == tcp_closed orelse Tag == ssl_closed).
 
 join(Member, Opts) ->
     LocalMember = swim_state:local_member(),
-    Transport = case maps:get(transport, Opts, tcp) of
-                    tcp -> ranch_tcp;
-                    ssl -> ranch_ssl
-                end,
-    TransportOpts = [binary, {active, false} | maps:get(transport_opts, Opts, [])],
+    Transport = maps:get(transport, Opts, tcp),
+    TransportOpts = [binary, {packet, 4}, {active, false} | maps:get(transport_opts, Opts, [])],
     case connect(Member, Transport, TransportOpts, Opts, maps:get(retries, Opts, 5)) of
         {ok, Socket} ->
             EncodedMessage = encode({push_pull, [{membership, {alive, 0, LocalMember}}]}),
-            ok = Transport:send(Socket, EncodedMessage),
-            case Transport:recv(Socket, 0, 5000) of
+            ok = swim_socket:send(Socket, EncodedMessage),
+            case swim_socket:recv(Socket, 0, 5000) of
                 {ok, Data} ->
-                    Transport:close(Socket),
+                    swim_socket:close(Socket),
                     {push_pull, RemoteState} = decode(Data),
                     merge_state(RemoteState),
                     ok;
@@ -46,7 +41,7 @@ join(Member, Opts) ->
     end.
 
 connect({Ip, Port} = Member, Transport, TransportOpts, Opts, Retries) ->
-    case Transport:connect(Ip, Port, TransportOpts, maps:get(connect_timeout, Opts, 5000)) of
+    case swim_socket:connect(Transport, Ip, Port, TransportOpts, maps:get(connect_timeout, Opts, 5000))of
         {ok, Socket} ->
             {ok, Socket};
         {error, _Reason} ->
@@ -62,31 +57,36 @@ retry_connect(Member, Transport, TransportOpts, Opts, Retries) ->
             connect(Member, Transport, TransportOpts, Opts, Retries - 1)
     end.
 
-start_link(Ref, Socket, Transport, Opts) ->
-    {ok, proc_lib:spawn_link(?MODULE, init, [{Ref, Socket, Transport, Opts}])}.
+start_link(IpAddr, Port, Opts) ->
+    gen_server:start_link(?MODULE, [IpAddr, Port, Opts], []).
 
-init({Ref, Socket, Transport, _Opts}) ->
-    ok = ranch:accept_ack(Ref),
-    ok = Transport:setopts(Socket, [{active, once}]),
-    gen_server:enter_loop(?MODULE, [], #state{socket = Socket, transport = Transport}).
+init([IpAddr, Port, Opts]) ->
+    MinAcceptors = maps:get(min_acceptors, Opts, 20),
+    TcpOpts = [{mode, binary}, {packet, 4}, {ip, IpAddr},
+               {reuseaddr, true}, {nodelay, true},
+               {active, false}],
+    {ok, Socket} = swim_socket:listen(tcp, Port, TcpOpts),
+    Acceptors = ets:new(accecptor, [private, set]),
+    State = #state{socket = Socket, acceptors = Acceptors, opts = Opts},
+    [start_add_acceptor(State) || _ <- lists:seq(1, MinAcceptors)],
+    {ok, State}.
 
 handle_call(_Req, _From, State) ->
     {noreply, State}.
 
+handle_cast(accepted, State) ->
+    ok = start_add_acceptor(State),
+    {noreply, State};
 handle_cast(_Req, State) ->
     {noreply, State}.
 
-handle_info({Tag, Socket, Data}, #state{socket = Socket, transport = Transport} = State)
-  when ?DATA_MSG(Tag) ->
-    handle_message(decode(Data), State),
-    ok = Transport:setopts(Socket, [{active, once}]),
+handle_info({'EXIT', _Pid, {error, emfile}}, State) ->
+    {stop, emfile, State};
+handle_info({'EXIT', Pid, _Reason}, State) ->
+    ok = remove_acceptor(State, Pid),
     {noreply, State};
-handle_info({Tag, Socket}, #state{socket = Socket} = State)
-  when ?CLOSED_MSG(Tag) ->
-    {stop, normal, State};
-handle_info({Tag, Socket, Reason}, #state{socket = Socket} = State)
-  when ?ERROR_MSG(Tag) ->
-    {stop, Reason, State}.
+handle_info(_Info, State) ->
+    {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
@@ -94,17 +94,52 @@ code_change(_OldVsn, State, _Extra) ->
 terminate(_Reason, _State) ->
     ok.
 
-handle_message({push_pull, RemoteState}, State) ->
-    LocalState = swim_state:local_state(),
-    send_message({push_pull, LocalState}, State),
-    spawn_link(fun() -> merge_state(RemoteState) end),
-    ok;
-handle_message(_Other, _State) ->
+start_add_acceptor(State) ->
+    Pid = spawn_link(?MODULE, accept, [self(), State#state.socket, State#state.opts]),
+    ets:insert(State#state.acceptors, {Pid}),
     ok.
 
-send_message(Message, #state{socket = Socket, transport = Transport}) ->
+remove_acceptor(State, Pid) ->
+    ets:delete(State#state.acceptors, Pid),
+    ok.
+
+accept(Server, ListenSocket, Opts) ->
+    case catch swim_socket:accept(ListenSocket, Server, maps:get(accept_timeout, Opts, 10000)) of
+        {ok, Socket} ->
+            read_message(Socket, Opts),
+            swim_socket:close(Socket),
+            ok;
+        {error, timeout} ->
+            accept(Server, ListenSocket, Opts);
+        {error, econnaborted} ->
+            accept(Server, ListenSocket, Opts);
+        {error, {tls_alert, _}} ->
+            accept(Server, ListenSocket, Opts);
+        {error, closed} ->
+            ok;
+        {error, Reason} ->
+            exit({error, Reason})
+    end.
+
+read_message(Socket, Opts) ->
+    case swim_socket:recv(Socket, 0, maps:get(receive_timeout, Opts, 60000)) of
+        {ok, Data} ->
+            handle_message(decode(Data), Socket);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+handle_message({push_pull, RemoteState}, Socket) ->
+    LocalState = swim_state:local_state(),
+    send_message({push_pull, LocalState}, Socket),
+    spawn_link(fun() -> merge_state(RemoteState) end),
+    ok;
+handle_message(_Other, _Socket) ->
+    ok.
+
+send_message(Message, Socket) ->
     EncodedMessage = encode(Message),
-    Transport:send(Socket, EncodedMessage).
+    swim_socket:send(Socket, EncodedMessage).
 
 decode(Data) ->
     binary_to_term(Data).

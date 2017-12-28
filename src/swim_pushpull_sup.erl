@@ -1,23 +1,17 @@
 -module(swim_pushpull_sup).
 -behavior(supervisor).
 
--export([start_link/0]).
+-export([start_link/2]).
 -export([init/1]).
 
-start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+start_link(IpAddr, Port) ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, [IpAddr, Port]).
 
-init([]) ->
-    {ok, Port} = application:get_env(swim, port),
-    RanchSupSpec = #{id => ranch_sup,
-                     start => {ranch_sup, start_link, []},
-                     restart => permanent,
-                     shutdown => 5000,
-                     type => supervisor,
-                     modules => [ranch_sup]},
-    Opts = [{port, Port}, {packet, 4}],
-    ListenerSpec = ranch:child_spec(swim_pushpull, ranch_tcp, Opts, swim_pushpull, []),
+init([IpAddr, Port]) ->
+    ListenerSpec = #{
+      id => pushpull,
+      start => {swim_pushpull, start_link, [IpAddr, Port, #{}]}},
     Flags = #{strategy => one_for_one,
               intensity => 10,
               period => 10},
-    {ok, {Flags, [RanchSupSpec, ListenerSpec]}}.
+    {ok, {Flags, [ListenerSpec]}}.

@@ -57,7 +57,7 @@ init([]) ->
                 start => {swim_failure, start_link,
                           [LocalMember, Keyring, AckTimeout, NackTimeout]}},
     PushPull = #{id => pushpull,
-                 start => {swim_pushpull_sup, start_link, []}},
+                 start => {swim_pushpull_sup, start_link, [ListenIP, ListenPort]}},
     Metrics = #{id => metrics,
                 start => {swim_metrics, start_link, []}},
     Flags = #{strategy => rest_for_one,
