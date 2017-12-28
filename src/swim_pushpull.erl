@@ -2,7 +2,6 @@
 -behavior(gen_server).
 
 -export([join/2]).
-
 -export([start_link/3]).
 -export([accept/4]).
 
