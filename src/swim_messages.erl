@@ -71,11 +71,11 @@
 %% The max message size we use is the minimum reassembly buffer size defined for
 %% IPv4 to avoid IP fragmentation -- 576 octets.
 %% UDP has an overhead of a 20 octet IP header and an 8 octet
-%% UDP header. The max swim message size is 40 octets, with 16 octets for the
-%% nonce, and 16 octets for the CipherTag. That leaves 476 octets for the events.
-%% A membership event is 41 octets which equates to 11 membership events per
-%% ACK/PING/PING-REQ message. User messages have an over head of 9 octets, leaving 467
-%% octets for the user message payload.
+%% UDP header. A PING/ACK/PING-REQ are each 13 octets plus 16 octets for the
+%% nonce, and 16 octets for the CipherTag for a minimum size of 84 bytes. That leaves
+%% 492 octets for the events.
+%% A membership event is 42 octets which equates to a maximum of 11 membership events per
+%% ACK/PING/PING-REQ message. A user event can be a maximum of 492 octets.
 %% @end
 -spec event_size_limit() -> non_neg_integer().
 event_size_limit() ->

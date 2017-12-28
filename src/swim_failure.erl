@@ -279,26 +279,12 @@ handle_events(Events) ->
 
 % Not sure if we need to handle the case when sending to the socket fails or if we can
 % just let it crash.
-send({DestIp, DestPort}, Msg, State) ->
-    Events = max_broadcasts(),
+send({DestIp, DestPort} = Target, Msg, State) ->
+    Events = swim_state:broadcasts(Target),
     Payload = encrypt(swim_messages:encode({Msg, Events}), State),
     ok = swim_socket:send(State#state.socket, DestIp, DestPort, Payload),
     swim_metrics:notify({tx, iolist_size(Payload)}),
     State.
-
-max_broadcasts() ->
-    Fold = fun(E, {B, R}) ->
-                   EncodedEvent = swim_messages:encode_event(E),
-                   case R - iolist_size(EncodedEvent) of
-                       L when L > 0 ->
-                           {take, {[E | B], L}};
-                       _ ->
-                           skip
-                   end
-           end,
-    MaxSize = swim_messages:event_size_limit(),
-    {Events, _} = swim_state:broadcasts(Fold, {[], MaxSize}),
-    Events.
 
 start_ack_timer(Timeout, Terminal, Sequence) ->
     swim_time:send_after(Timeout, self(), {ack_timeout, Terminal, Sequence}).

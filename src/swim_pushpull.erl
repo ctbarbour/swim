@@ -71,7 +71,8 @@ init([IpAddr, Port, Opts]) ->
                {active, false}],
     {ok, Socket} = swim_socket:listen(tcp, Port, TcpOpts),
     Acceptors = ets:new(accecptor, [private, set]),
-    State = #state{socket = Socket, acceptors = Acceptors, opts = Opts},
+    State = #state{local_member = {IpAddr, Port}, socket = Socket,
+                   acceptors = Acceptors, opts = Opts},
     [start_add_acceptor(State) || _ <- lists:seq(1, MinAcceptors)],
     {ok, State}.
 

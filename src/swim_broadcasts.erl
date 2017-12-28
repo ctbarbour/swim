@@ -54,17 +54,23 @@
 -module(swim_broadcasts).
 
 -export([new/1]).
+-export([new/2]).
 -export([insert/2]).
 -export([take/2]).
 -export([prune/2]).
 -export([takefold/3]).
+-export([take_limit/1]).
+-export([take_limit/2]).
 -export([retransmit_limit/2]).
 
 -record(broadcast, {
           members     = []  :: [{non_neg_integer(), swim:membership_event()}],
           users       = []  :: [{non_neg_integer(), swim:user_event()}],
-          retransmits       :: pos_integer()
+          retransmits       :: pos_integer(),
+          limit_fun         :: fun((swim:member_event() | swim:user_event()) -> pos_integer()),
+          limit             :: pos_integer()
          }).
+
 -opaque broadcast() :: #broadcast{}.
 -export_type([broadcast/0]).
 
@@ -73,7 +79,22 @@
       Broadcast   :: broadcast().
 
 new(Retransmits) ->
-    #broadcast{retransmits = Retransmits}.
+    new(Retransmits, default_limit()).
+
+-spec new(Retransmits, Limit) -> Broadcast when
+      Retransmits :: pos_integer(),
+      Limit       :: pos_integer(),
+      Broadcast   :: broadcast().
+
+new(Retransmits, Limit) ->
+    LimitFun = default_limit_fun(),
+    #broadcast{retransmits = Retransmits, limit = Limit, limit_fun = LimitFun}.
+
+default_limit() ->
+    swim_messages:event_size_limit().
+
+default_limit_fun() ->
+    fun(E) -> iolist_size(swim_messages:encode_event(E)) end.
 
 -spec retransmit_limit(NumMembers, Broadcast) -> Limit when
       NumMembers       :: pos_integer(),
@@ -101,6 +122,54 @@ take(K, [{T, Event} | Events], UserEvents, {B, M, U}) ->
     take(K - 1, Events, UserEvents, {[{membership, Event} | B], [{T + 1, Event} | M], U});
 take(K, [], [{T, Event} | Events], {B, M, U}) ->
     take(K - 1, [], Events, {[{user, Event} | B], M, [{T + 1, Event} | U]}).
+
+-spec take_limit(Broadcasts0) -> {Events, Broadcasts} when
+      Broadcasts0 :: broadcast(),
+      Events      :: [swim:membership_event() | swim:user_event()],
+      Broadcasts  :: broadcast().
+
+take_limit(#broadcast{limit = Limit, limit_fun = Fun, members = Members, users = Users} = Broadcast) ->
+    {B, M, U} = take_limit(Limit, Fun, Members, Users, {[], [], []}),
+    {B, Broadcast#broadcast{members = M, users = U}}.
+
+take_limit(0, _Fun, Members, Users, {B, M, U}) ->
+    {B, lists:sort(Members ++ M), lists:sort(Users ++ U)};
+take_limit(_Limit, _Fun, [], [], {B, M, U}) ->
+    {B, lists:sort(M), lists:sort(U)};
+take_limit(Limit, Fun, [{T, E} | Members], Users, {B, M, U}) ->
+    case Limit - Fun(E) of
+        L when L >= 0 ->
+            take_limit(L, Fun, Members, Users, {[{membership, E} | B], [{T + 1, E} | M], U});
+        _ ->
+            take_limit(0, Fun, Members, Users, {B, [{T, E} | Members], U})
+    end;
+take_limit(Limit, Fun, [], [{T, E} | Users], {B, M, U}) ->
+    case Limit - Fun(E) of
+        L when L >= 0 ->
+            take_limit(L, Fun, [], Users, {[{user, E} | B], M, [{T + 1, E} | U]});
+        _ ->
+            take_limit(0, Fun, [], Users, {B, M, [{T, E} | U]})
+    end.
+
+-spec take_limit(Member, Broadcasts0) -> {Events, Broadcasts} when
+      Member      :: swim:member(),
+      Broadcasts0 :: broadcast(),
+      Events      :: [swim:membership_event() | swim:user_event()],
+      Broadcasts  :: broadcast().
+
+take_limit(Target, Broadcasts) ->
+    #broadcast{limit = Limit, limit_fun = Fun, users = Users} = Broadcasts,
+    Partition = fun({_, {suspect, _, M}}) -> M =:= Target end,
+    {Maybe, Members} = lists:partition(Partition, Broadcasts#broadcast.members),
+    {B, M, U} =
+        case Maybe of
+            [] ->
+                take_limit(Limit, Fun, Members, Users, {[], [], []});
+            [{T, About}] ->
+                Acc = {[About], [{T + 1, About}], []},
+                take_limit(Limit - Fun(About), Fun, Members, Users, Acc)
+        end,
+    {B, Broadcasts#broadcast{members = M, users = U}}.
 
 -spec takefold(Fun, InitAcc, Broadcast0) -> {Acc, Broadcast} when
       Fun        :: fun((swim:membership_event() | swim:user_event(), InitAcc) -> Acc),

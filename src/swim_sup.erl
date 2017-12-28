@@ -40,9 +40,10 @@ init([]) ->
     Alpha           = application:get_env(swim, alpha, 5),
     Beta            = application:get_env(swim, beta, 6),
     Retransmits     = application:get_env(swim, retransmit_factor, 3),
+    MaxMessageSize  = application:get_env(swim, max_message_size, 452),
     LocalMember     = {ListenIP, ListenPort},
     Membership      = swim_membership:new(LocalMember, Alpha, Beta, ProbeTimeout, SuspicionFactor),
-    Broadcasts      = swim_broadcasts:new(Retransmits),
+    Broadcasts      = swim_broadcasts:new(Retransmits, MaxMessageSize),
     Awareness       = swim_awareness:new(AwarenessCount),
     StateOpts = #{
       protocol_period  => ProtocolPeriod,
