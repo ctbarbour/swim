@@ -61,11 +61,13 @@ init([]) ->
                  start => {swim_pushpull_sup, start_link, [ListenIP, ListenPort]}},
     Metrics = #{id => metrics,
                 start => {swim_metrics, start_link, []}},
+    Subscriptions = #{id => subscriptions,
+                      start => {swim_subscriptions, start_link, []}},
     Flags = #{strategy => rest_for_one,
               intensity => 5,
               period => 900
              },
-    {ok, {Flags, [State, Failure, PushPull, Metrics]}}.
+    {ok, {Flags, [State, Failure, PushPull, Subscriptions, Metrics]}}.
 
 read_key_file({ok, KeyFile}) ->
     {ok, EncodedKey} = file:read_file(KeyFile),

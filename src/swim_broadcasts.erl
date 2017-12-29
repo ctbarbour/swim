@@ -56,11 +56,9 @@
 -export([new/1]).
 -export([new/2]).
 -export([insert/2]).
--export([take/2]).
 -export([prune/2]).
--export([takefold/3]).
--export([take_limit/1]).
--export([take_limit/2]).
+-export([take/1]).
+-export([take/2]).
 -export([retransmit_limit/2]).
 
 -record(broadcast, {
@@ -104,100 +102,53 @@ default_limit_fun() ->
 retransmit_limit(NumMembers, #broadcast{retransmits = Factor}) ->
     round(math:log(NumMembers + 1)) + Factor.
 
--spec take(Max, Broadcasts0) -> {Events, Broadcasts} when
-      Max         :: pos_integer(),
-      Broadcasts0 :: broadcast(),
-      Events      :: [swim:event()],
-      Broadcasts  :: broadcast().
-
-take(Max, #broadcast{members = MembershipEvents0, users = UserEvents0} = Broadcast) ->
-    {B, M, U} = take(Max, MembershipEvents0, UserEvents0, {[], [], []}),
-    {B, Broadcast#broadcast{members = M, users = U}}.
-
-take(0, MembershipEvents, UserEvents, {B, M, U}) ->
-    {B, lists:sort(MembershipEvents ++ M), lists:sort(UserEvents ++ U)};
-take(_K, [], [], {B, M, U}) ->
-    {B, lists:sort(M), lists:sort(U)};
-take(K, [{T, Event} | Events], UserEvents, {B, M, U}) ->
-    take(K - 1, Events, UserEvents, {[{membership, Event} | B], [{T + 1, Event} | M], U});
-take(K, [], [{T, Event} | Events], {B, M, U}) ->
-    take(K - 1, [], Events, {[{user, Event} | B], M, [{T + 1, Event} | U]}).
-
--spec take_limit(Broadcasts0) -> {Events, Broadcasts} when
+-spec take(Broadcasts0) -> {Events, Broadcasts} when
       Broadcasts0 :: broadcast(),
       Events      :: [swim:membership_event() | swim:user_event()],
       Broadcasts  :: broadcast().
 
-take_limit(#broadcast{limit = Limit, limit_fun = Fun, members = Members, users = Users} = Broadcast) ->
-    {B, M, U} = take_limit(Limit, Fun, Members, Users, {[], [], []}),
+take(#broadcast{limit = Limit, limit_fun = Fun, members = Members, users = Users} = Broadcast) ->
+    {B, M, U} = take(Limit, Fun, Members, Users, {[], [], []}),
     {B, Broadcast#broadcast{members = M, users = U}}.
 
-take_limit(0, _Fun, Members, Users, {B, M, U}) ->
+take(0, _Fun, Members, Users, {B, M, U}) ->
     {B, lists:sort(Members ++ M), lists:sort(Users ++ U)};
-take_limit(_Limit, _Fun, [], [], {B, M, U}) ->
+take(_Limit, _Fun, [], [], {B, M, U}) ->
     {B, lists:sort(M), lists:sort(U)};
-take_limit(Limit, Fun, [{T, E} | Members], Users, {B, M, U}) ->
-    case Limit - Fun(E) of
+take(Limit, Fun, [{T, E} | Members], Users, {B, M, U}) ->
+    case Limit - Fun({membership, E}) of
         L when L >= 0 ->
-            take_limit(L, Fun, Members, Users, {[{membership, E} | B], [{T + 1, E} | M], U});
+            take(L, Fun, Members, Users, {[{membership, E} | B], [{T + 1, E} | M], U});
         _ ->
-            take_limit(0, Fun, Members, Users, {B, [{T, E} | Members], U})
+            take(0, Fun, Members, Users, {B, [{T, E} | Members], U})
     end;
-take_limit(Limit, Fun, [], [{T, E} | Users], {B, M, U}) ->
-    case Limit - Fun(E) of
+take(Limit, Fun, [], [{T, E} | Users], {B, M, U}) ->
+    case Limit - Fun({user, E}) of
         L when L >= 0 ->
-            take_limit(L, Fun, [], Users, {[{user, E} | B], M, [{T + 1, E} | U]});
+            take(L, Fun, [], Users, {[{user, E} | B], M, [{T + 1, E} | U]});
         _ ->
-            take_limit(0, Fun, [], Users, {B, M, [{T, E} | U]})
+            take(0, Fun, [], Users, {B, M, [{T, E} | U]})
     end.
 
--spec take_limit(Member, Broadcasts0) -> {Events, Broadcasts} when
+-spec take(Member, Broadcasts0) -> {Events, Broadcasts} when
       Member      :: swim:member(),
       Broadcasts0 :: broadcast(),
       Events      :: [swim:membership_event() | swim:user_event()],
       Broadcasts  :: broadcast().
 
-take_limit(Target, Broadcasts) ->
+take(Target, Broadcasts) ->
     #broadcast{limit = Limit, limit_fun = Fun, users = Users} = Broadcasts,
-    Partition = fun({_, {suspect, _, M}}) -> M =:= Target end,
+    Partition = fun({_, {suspect, _, M, _}}) -> M =:= Target; (_) -> false end,
     {Maybe, Members} = lists:partition(Partition, Broadcasts#broadcast.members),
     {B, M, U} =
         case Maybe of
             [] ->
-                take_limit(Limit, Fun, Members, Users, {[], [], []});
+                take(Limit, Fun, Members, Users, {[], [], []});
             [{T, About}] ->
-                Acc = {[About], [{T + 1, About}], []},
-                take_limit(Limit - Fun(About), Fun, Members, Users, Acc)
+                Acc = {[{membership, About}], [{T + 1, About}], []},
+                take(Limit - Fun({membership, About}), Fun, Members, Users, Acc)
         end,
     {B, Broadcasts#broadcast{members = M, users = U}}.
-
--spec takefold(Fun, InitAcc, Broadcast0) -> {Acc, Broadcast} when
-      Fun        :: fun((swim:membership_event() | swim:user_event(), InitAcc) -> Acc),
-      InitAcc    :: any(),
-      Acc        :: InitAcc,
-      Broadcast0 :: broadcast(),
-      Broadcast  :: broadcast().
-
-takefold(Fun, InitAcc, #broadcast{members = Members, users = Users} = Broadcast) ->
-    {Acc, M, U} = takefold(Fun, Members, Users, {InitAcc, [], []}),
-    {Acc, Broadcast#broadcast{members = M, users = U}}.
-
-takefold(_Fun, [], [], {Acc, M, U}) ->
-    {Acc, lists:sort(M), lists:sort(U)};
-takefold(Fun, [{T, E} | Members], Users, {Acc0, M, U}) ->
-    case Fun({membership, E}, Acc0) of
-        {take, Acc} ->
-            takefold(Fun, Members, Users, {Acc, [{T + 1, E} | M], U});
-        skip ->
-            takefold(Fun, Members, Users, {Acc0, M, [{T, E} | U]})
-    end;
-takefold(Fun, [], [{T, E} | Users], {Acc0, M, U}) ->
-    case Fun({user, E}, Acc0) of
-        {take, Acc} ->
-            takefold(Fun, [], Users, {Acc, M, [{T + 1, E} | U]});
-        skip ->
-            takefold(Fun, [], Users, {Acc0, M, [{T, E} | U]})
-    end.
 
 -spec prune(Retransmits, Broadcasts0) -> Broadcasts when
       Retransmits :: non_neg_integer(),

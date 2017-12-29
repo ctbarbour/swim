@@ -275,6 +275,8 @@ handle_probe_timeout(_Target, _Sequence, State) ->
 handle_events(Events) ->
     [swim_state:handle_event(Event) || {Category, _} = Event <- Events,
                                        Category =:= membership],
+    [swim_subscriptions:publish(Event) || {Category, _} = Event <- Events,
+                                          Category =:= user],
     ok.
 
 % Not sure if we need to handle the case when sending to the socket fails or if we can

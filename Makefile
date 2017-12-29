@@ -6,4 +6,4 @@ compile:
 	$(REBAR) do xref, dialyzer
 
 test:
-	$(REBAR) proper
+	$(REBAR) ct

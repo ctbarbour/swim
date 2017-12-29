@@ -21,6 +21,8 @@
 
 -behavior(proper_statem).
 
+-export([prop_membership/0]).
+
 -export([command/1]).
 -export([initial_state/0]).
 -export([next_state/3]).
@@ -59,6 +61,9 @@ g_non_local_member(State) ->
 g_existing_member(State) ->
     oneof([g_local_member(State), g_non_local_member(State)]).
 
+g_suspecting_member(State) ->
+    frequency([{5, g_member(State)}, {1, local}]).
+
 g_member(State) ->
     frequency([{1, g_member()}] ++
                   [{3, g_existing_member(State)} || State#state.members /= []]).
@@ -69,8 +74,10 @@ initial_state() ->
 command(State) ->
     oneof([
            {call, ?MODULE, alive, [g_member(State), g_incarnation()]},
-           {call, ?MODULE, suspect, [g_member(State), g_incarnation(), g_member(State)]},
-           {call, ?MODULE, faulty, [g_member(State), g_incarnation(), g_member(State)]},
+           {call, ?MODULE, suspect,
+            [g_member(State), g_incarnation(), g_suspecting_member(State)]},
+           {call, ?MODULE, faulty,
+            [g_member(State), g_incarnation(), g_suspecting_member(State)]},
            {call, ?MODULE, members, []}
           ]).
 

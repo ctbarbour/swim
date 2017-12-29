@@ -30,6 +30,7 @@
 -export([ack/1]).
 -export([probe_timeout/2]).
 -export([handle_event/1]).
+-export([publish/1]).
 
 -export([init/1]).
 -export([handle_call/3]).
@@ -66,6 +67,9 @@ proxies(Target) ->
 
 broadcasts(Target) ->
     gen_server:call(?MODULE, {broadcasts, Target}).
+
+publish(Event) ->
+    gen_server:cast(?MODULE, {publish, Event}).
 
 ack(Member) ->
     gen_server:cast(?MODULE, {ack, Member}).
@@ -104,7 +108,7 @@ handle_call({proxies, Target}, _From, State) ->
     {reply, Proxies, State};
 handle_call({broadcasts, Target}, _From, State) ->
     #state{membership = Membership, broadcasts = Broadcasts0} = State,
-    {Events, Broadcasts1} = swim_broadcasts:take_limit(Target, Broadcasts0),
+    {Events, Broadcasts1} = swim_broadcasts:take(Target, Broadcasts0),
     NumMembers = swim_membership:size(Membership),
     Retransmits = swim_broadcasts:retransmit_limit(NumMembers, Broadcasts1),
     Broadcasts2 = swim_broadcasts:prune(Retransmits, Broadcasts1),
@@ -117,6 +121,9 @@ handle_cast({ack, Member}, #state{current_probe = {Member, Incarnation}} = State
     {noreply, handle_ack(Member, Incarnation, State)};
 handle_cast({probe_timeout, Member, MissedNacks}, State) ->
     {noreply, handle_probe_timeout(Member, MissedNacks, State)};
+handle_cast({publish, Event}, State) ->
+    Broadcasts = swim_broadcasts:insert({user, Event}, State#state.broadcasts),
+    {noreply, State#state{broadcasts = Broadcasts}};
 handle_cast({broadcast_event, Event}, State) ->
     {Events, Membership} = swim_membership:handle_event(Event, State#state.membership),
     Awareness =
@@ -125,6 +132,7 @@ handle_cast({broadcast_event, Event}, State) ->
             false -> State#state.awareness
         end,
     Broadcasts = swim_broadcasts:insert(Events, State#state.broadcasts),
+    ok = swim_subscriptions:publish(Events),
     {noreply, State#state{membership = Membership, broadcasts = Broadcasts, awareness = Awareness}};
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -138,6 +146,7 @@ handle_info({suspicion_timeout, Member, SuspectedAt}, State) ->
     {Events, Membership} =
         swim_membership:faulty(Member, SuspectedAt, local, State#state.membership),
     Broadcasts = swim_broadcasts:insert(Events, State#state.broadcasts),
+    ok = swim_subscriptions:publish(Events),
     {noreply, State#state{membership = Membership, broadcasts = Broadcasts}};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -154,6 +163,7 @@ handle_probe_timeout(Member, MissedNacks, #state{current_probe = {Member, Incarn
     #state{membership = Membership0, broadcasts = Broadcasts0, awareness = Awareness0} = State,
     {Events, Membership} = swim_membership:suspect(Member, Incarnation, local, Membership0),
     Broadcasts = swim_broadcasts:insert(Events, Broadcasts0),
+    ok = swim_subscriptions:publish(Events),
     Awareness = swim_awareness:failure(MissedNacks + 1, Awareness0),
     State#state{
       current_probe = undefined,
@@ -168,6 +178,7 @@ handle_ack(Member, Incarnation, State) ->
     #state{membership = Membership0, broadcasts = Broadcasts0, awareness = Awareness0} = State,
     {Events, Membership} = swim_membership:alive(Member, Incarnation, Membership0),
     Broadcasts = swim_broadcasts:insert(Events, Broadcasts0),
+    ok = swim_subscriptions:publish(Events),
     Awareness = swim_awareness:success(Awareness0),
     State#state{
       membership    = Membership,

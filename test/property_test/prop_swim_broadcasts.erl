@@ -37,7 +37,7 @@ initial_state() ->
 command(_State) ->
     frequency([
                {1, {call, ?MODULE, insert, [swim_event()]}},
-               {1, {call, ?MODULE, take, [range(1,11)]}},
+               {1, {call, ?MODULE, take, []}},
                {1, {call, ?MODULE, prune, [g_retransmits()]}}
               ]).
 
@@ -50,8 +50,8 @@ precondition(_State, _Call) ->
 
 next_state(State, _V, {call, ?MODULE, insert, [Event]}) ->
     State#state{events = lists:sort(fun sort/2, [{0, Event} | State#state.events])};
-next_state(State, _V, {call, ?MODULE, take, [Max]}) ->
-    N = min(length(State#state.events), Max),
+next_state(State, _V, {call, ?MODULE, take, []}) ->
+    N = min(length(State#state.events), 11),
     {Taken0, Rest} = lists:split(N, lists:sort(fun sort/2, State#state.events)),
     Taken = [{T + 1, E} || {T, E} <- Taken0],
     State#state{events = lists:sort(fun sort/2, Taken ++ Rest)};
@@ -61,7 +61,7 @@ next_state(State, _V, {call, ?MODULE, prune, [Retransmit]}) ->
     Pruned = lists:foldl(fun({_, E}, Acc) -> [E | Acc] end, State#state.pruned, Pruned0),
     State#state{events = lists:sort(fun sort/2, Keep), pruned = Pruned}.
 
-postcondition(State, {call, ?MODULE, take, [_Max]}, Result) ->
+postcondition(State, {call, ?MODULE, take, []}, Result) ->
     Events = [E || {_, E} <- State#state.events],
     lists:all(fun(M) -> lists:member(M, Events) end, Result);
 postcondition(_State, {call, ?MODULE, insert, [_Event]}, _Result) ->
@@ -87,8 +87,8 @@ sort({_, {user, _}}, {_, {membership, _}}) -> false;
 sort({_, {membership, _}}, {_, {user, _}}) -> true;
 sort(A, B) -> A =< B.
 
-take(Take) ->
-    gen_server:call(?MODULE, {take, Take}, 500).
+take() ->
+    gen_server:call(?MODULE, take, 500).
 
 insert(Event) ->
     gen_server:call(?MODULE, {insert, Event}, 500).
@@ -105,8 +105,8 @@ stop() ->
 init([]) ->
     {ok, swim_broadcasts:new(3)}.
 
-handle_call({take, Max}, _From, Broadcasts0) ->
-    {Take, Broadcasts} = swim_broadcasts:take(Max, Broadcasts0),
+handle_call(take, _From, Broadcasts0) ->
+    {Take, Broadcasts} = swim_broadcasts:take(Broadcasts0),
     {reply, Take, Broadcasts};
 handle_call({insert, Event}, _From, Broadcasts) ->
     {reply, ok, swim_broadcasts:insert(Event, Broadcasts)};

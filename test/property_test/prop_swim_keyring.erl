@@ -2,6 +2,8 @@
 
 -include_lib("proper/include/proper.hrl").
 
+-export([prop_encryption/0]).
+
 -import(swim_generators, [swim_message/0]).
 
 g_key() ->

@@ -20,8 +20,9 @@
 -export([join/1]).
 -export([members/0]).
 -export([myself/0]).
--export([subscribe/0]).
--export([unsubscribe/0]).
+-export([publish/1]).
+-export([subscribe/1]).
+-export([unsubscribe/1]).
 -export([setup/0]).
 
 -type member()           :: {inet:ip_address(), inet:port_number()}.
@@ -48,11 +49,18 @@ members() ->
 myself() ->
     swim_state:local_member().
 
-subscribe() ->
-    swim_metrics:subscribe(self()).
+publish(Msg) when is_binary(Msg) ->
+    swim_state:publish(Msg).
 
-unsubscribe() ->
-    swim_metrics:unsubscribe(self()).
+subscribe(metrics) ->
+    swim_metrics:subscribe(self());
+subscribe(EventCategory) ->
+    swim_subscriptions:subscribe(EventCategory, self()).
+
+unsubscribe(metrics) ->
+    swim_metrics:unsubscribe(self());
+unsubscribe(EventCategory) ->
+    swim_subscriptions:unsubscribe(EventCategory, self()).
 
 setup() ->
     Key = base64:encode(crypto:strong_rand_bytes(32)),

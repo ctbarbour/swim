@@ -1,5 +1,5 @@
 @author Tucker Barbour <barbct5@gmail.com>
-@copyright 2015 Tucker Barbour
+@copyright 2015-2018 Tucker Barbour
 @version {@version}
 @title SWIM - An Awesome Weakly-consistent Infection-style Gossip Protocol
 @reference http://www.cs.cornell.edu/~asdas/research/dsn02-SWIM.pdf

@@ -19,6 +19,8 @@
 
 -include_lib("proper/include/proper.hrl").
 
+-export([prop_encode_decode/0]).
+
 -import(swim_generators, [swim_message/0]).
 
 prop_encode_decode() ->

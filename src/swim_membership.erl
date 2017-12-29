@@ -144,9 +144,10 @@ probe_target(#membership{probe_targets = []} = Membership) ->
     probe_target(Membership#membership{probe_targets = Targets});
 probe_target(#membership{probe_targets = [T | Targets]} = Membership) ->
     Target =
-        case maps:get(T, Membership#membership.members) of
-            #alive{incarnation = Inc} -> {T, Inc};
-            #suspect{incarnation = Inc} -> {T, Inc}
+        case maps:find(T, Membership#membership.members) of
+            {ok, #alive{incarnation = Inc}} -> {T, Inc};
+            {ok, #suspect{incarnation = Inc}} -> {T, Inc};
+            error -> probe_target(Membership#membership{probe_targets = Targets})
         end,
     {Target, Membership#membership{probe_targets = Targets}}.
 
