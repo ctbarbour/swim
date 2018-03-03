@@ -91,6 +91,10 @@ modified the protocol to support both UDP and TCP:
 
 - [Memberlist](https://github.com/hashicorp/memberlist)
 
+### Lifeguard
+
+We've also included some of the improvements outlined in the [Lifeguard](https://arxiv.org/abs/1707.00788) paper from Hashicorp. You can also find more information about their research on [their website](https://www.hashicorp.com/blog/making-gossip-more-robust-with-lifeguard). On a local 5 node cluster, we have observed a reduction in false positives rates during the threshold experiment. More details of the results will be provided when we have time to conduct a more scientific experiement with this implementation.
+
 ### Build
 
 We require OTP-19.x and an OpenSSL that supports AES-GCM. The default on OSX

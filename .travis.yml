@@ -2,8 +2,7 @@ language: erlang
 otp_release:
   - 20
   - 19
-  - 18
-script: ./rebar3 do xref, dialyzer, proper
+script: make test
 cache:
   directories:
     - ~/.cache/rebar3/
