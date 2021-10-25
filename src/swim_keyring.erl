@@ -60,7 +60,7 @@ add(Key, KeyRing)
 
 encrypt(PlainText, #keyring{keys = [Key | _], aad = AAD}) ->
     IV = crypto:strong_rand_bytes(16),
-    {CipherText, CipherTag} = crypto:block_encrypt(aes_gcm, Key, IV, {AAD, PlainText}),
+    {CipherText, CipherTag} = crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, PlainText, AAD, true),
     <<IV/binary, CipherTag/binary, CipherText/binary>>.
 
 %% @doc Verifies the authenticity of the payload and decrypts the ciphertext
@@ -81,7 +81,7 @@ decrypt(_CipherText, _KeyRing) ->
 decrypt_loop([], _AAD, _IV, _CipherTag, _CipherText) ->
     {error, failed_verification};
 decrypt_loop([Key | Keys], AAD, IV, CipherTag, CipherText) ->
-    case crypto:block_decrypt(aes_gcm, Key, IV, {AAD, CipherText, CipherTag}) of
+    case crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, CipherText, AAD, CipherTag, false) of
         error ->
             decrypt_loop(Keys, AAD, IV, CipherTag, CipherText);
         PlainText ->

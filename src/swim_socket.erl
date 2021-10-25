@@ -93,7 +93,7 @@ accept({ssl, ListenSocket}, Pid, Timeout) ->
     case ssl:transport_accept(ListenSocket, Timeout) of
         {ok, Socket} ->
             gen_server:cast(Pid, accepted),
-            case ssl:ssl_accept(Socket, Timeout) of
+            case ssl:handshake(Socket, Timeout) of
                 ok ->
                     {ok, {ssl, Socket}};
                 {error, closed} ->
