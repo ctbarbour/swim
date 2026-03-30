@@ -125,7 +125,8 @@ handle_cast({publish, Event}, State) ->
     Broadcasts = swim_broadcasts:insert({user, Event}, State#state.broadcasts),
     {noreply, State#state{broadcasts = Broadcasts}};
 handle_cast({broadcast_event, Event}, State) ->
-    {Events, Membership} = swim_membership:handle_event(Event, State#state.membership),
+    {Events, TimerActions, Membership0} = swim_membership:handle_event(Event, State#state.membership),
+    Membership = handle_timer_actions(TimerActions, Membership0),
     Awareness =
         case swim_membership:refuted(Events, Membership) of
             true -> swim_awareness:failure(State#state.awareness);
@@ -143,8 +144,9 @@ handle_info(protocol_period, State) ->
     schedule_next_protocol_period(NewState),
     {noreply, NewState};
 handle_info({suspicion_timeout, Member, SuspectedAt}, State) ->
-    {Events, Membership} =
+    {Events, TimerActions, Membership0} =
         swim_membership:faulty(Member, SuspectedAt, local, State#state.membership),
+    Membership = handle_timer_actions(TimerActions, Membership0),
     Broadcasts = swim_broadcasts:insert(Events, State#state.broadcasts),
     ok = swim_subscriptions:publish(Events),
     {noreply, State#state{membership = Membership, broadcasts = Broadcasts}};
@@ -161,7 +163,8 @@ terminate(_Reason, _State) ->
 
 handle_probe_timeout(Member, MissedNacks, #state{current_probe = {Member, Incarnation}} = State) ->
     #state{membership = Membership0, broadcasts = Broadcasts0, awareness = Awareness0} = State,
-    {Events, Membership} = swim_membership:suspect(Member, Incarnation, local, Membership0),
+    {Events, TimerActions, Membership1} = swim_membership:suspect(Member, Incarnation, local, Membership0),
+    Membership = handle_timer_actions(TimerActions, Membership1),
     Broadcasts = swim_broadcasts:insert(Events, Broadcasts0),
     ok = swim_subscriptions:publish(Events),
     Awareness = swim_awareness:failure(MissedNacks + 1, Awareness0),
@@ -176,7 +179,8 @@ handle_probe_timeout(_Member, _MissedNacks, State) ->
 
 handle_ack(Member, Incarnation, State) ->
     #state{membership = Membership0, broadcasts = Broadcasts0, awareness = Awareness0} = State,
-    {Events, Membership} = swim_membership:alive(Member, Incarnation, Membership0),
+    {Events, TimerActions, Membership1} = swim_membership:alive(Member, Incarnation, Membership0),
+    Membership = handle_timer_actions(TimerActions, Membership1),
     Broadcasts = swim_broadcasts:insert(Events, Broadcasts0),
     ok = swim_subscriptions:publish(Events),
     Awareness = swim_awareness:success(Awareness0),
@@ -201,3 +205,13 @@ schedule_next_protocol_period(State) ->
     #state{awareness = Awareness, protocol_period = ProtocolPeriod} = State,
     Timeout = swim_awareness:scale(ProtocolPeriod, Awareness),
     swim_time:send_after(Timeout, self(), protocol_period).
+
+handle_timer_actions([], Membership) ->
+    Membership;
+handle_timer_actions([{start_suspicion_timer, Timeout, Member, Inc} | Rest], Membership) ->
+    TRef = swim_time:send_after(Timeout, self(), {suspicion_timeout, Member, Inc}),
+    Now = swim_time:monotonic_time(),
+    handle_timer_actions(Rest, swim_membership:set_suspicion_timer(Member, TRef, Now, Membership));
+handle_timer_actions([{cancel_suspicion_timer, TRef} | Rest], Membership) ->
+    swim_time:cancel_timer(TRef, [{async, true}, {info, false}]),
+    handle_timer_actions(Rest, Membership).

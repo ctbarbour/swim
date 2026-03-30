@@ -292,13 +292,16 @@ init([LocalMember]) ->
     {ok, swim_membership:new(LocalMember, 5, 6, 500, 3)}.
 
 handle_call({alive, Member, Incarnation}, _, Membership0) ->
-    {_, Membership} = swim_membership:alive(Member, Incarnation, Membership0),
+    {_, TimerActions, Membership1} = swim_membership:alive(Member, Incarnation, Membership0),
+    Membership = apply_timer_actions(TimerActions, Membership1),
     {reply, ok, Membership};
 handle_call({suspect, Member, Incarnation, From}, _, Membership0) ->
-    {_, Membership} = swim_membership:suspect(Member, Incarnation, From, Membership0),
+    {_, TimerActions, Membership1} = swim_membership:suspect(Member, Incarnation, From, Membership0),
+    Membership = apply_timer_actions(TimerActions, Membership1),
     {reply, ok, Membership};
 handle_call({faulty, Member, Incarnation, From}, _, Membership0) ->
-    {_, Membership} = swim_membership:faulty(Member, Incarnation, From, Membership0),
+    {_, TimerActions, Membership1} = swim_membership:faulty(Member, Incarnation, From, Membership0),
+    Membership = apply_timer_actions(TimerActions, Membership1),
     {reply, ok, Membership};
 handle_call(members, _, Membership) ->
     Members = swim_membership:members(Membership),
@@ -319,7 +322,8 @@ handle_call({proxies, Num, Target}, _, Membership) ->
     Proxies = swim_membership:proxies(Num, Target, Membership),
     {reply, Proxies, Membership};
 handle_call({handle_event, Event}, _, Membership0) ->
-    {_, Membership} = swim_membership:handle_event(Event, Membership0),
+    {_, TimerActions, Membership1} = swim_membership:handle_event(Event, Membership0),
+    Membership = apply_timer_actions(TimerActions, Membership1),
     {reply, ok, Membership};
 handle_call(local_state, _, Membership) ->
     Events = swim_membership:local_state(Membership),
@@ -336,6 +340,13 @@ code_change(_OldVsn, State, _Extra) ->
 
 terminate(_Reason, _State) ->
     ok.
+
+apply_timer_actions([], M) -> M;
+apply_timer_actions([{start_suspicion_timer, _Timeout, Member, _Inc} | Rest], M) ->
+    M1 = swim_membership:set_suspicion_timer(Member, make_ref(), swim_time:monotonic_time(), M),
+    apply_timer_actions(Rest, M1);
+apply_timer_actions([{cancel_suspicion_timer, _TRef} | Rest], M) ->
+    apply_timer_actions(Rest, M).
 
 %% probe_target/1 has a bug: when probe_targets contains stale members
 %% (removed via faulty), the recursive call's return value gets nested
