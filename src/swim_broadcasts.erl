@@ -100,7 +100,7 @@ default_limit_fun() ->
       Limit            :: pos_integer().
 
 retransmit_limit(NumMembers, #broadcast{retransmits = Factor}) ->
-    round(math:log(NumMembers + 1)) + Factor.
+    Factor * ceil(math:log10(NumMembers + 1)).
 
 -spec take(Broadcasts0) -> {Events, Broadcasts} when
       Broadcasts0 :: broadcast(),

@@ -319,7 +319,7 @@ remaining_suspicion_time(Remaining, Suspect) ->
 
 initial_suspicion_timeout(Membership) ->
     N = maps:size(Membership#membership.members),
-    Min = Membership#membership.alpha * max(1, math:log(N)) * Membership#membership.protocol_period,
+    Min = Membership#membership.alpha * max(1, math:log10(N)) * Membership#membership.protocol_period,
     Max = Membership#membership.beta * Min,
     % If there aren't enough members in the group excluding ourselves and the suspected member we
     % won't expect any additional suspicions so we immediately set the timeout to Min.
