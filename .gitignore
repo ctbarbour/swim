@@ -8,3 +8,5 @@ log/
 TAGS
 .DS_Store
 .rebar3
+.direnv/
+.claude/settings.local.json

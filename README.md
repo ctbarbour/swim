@@ -1,16 +1,22 @@
-# SWIM - An Awesome Weakly-consistent Infection-style Gossip Protocol #
+# SWIM - An Awesome Weakly-consistent Infection-style Gossip Protocol
 
-Copyright (c) 2015-2018 Tucker Barbour
+Copyright (c) 2015-2026 Tucker Barbour
 
 __Authors:__ Tucker Barbour ([`tucker.barbour@gmail.com`](mailto:tucker.barbour@gmail.com)).
 
-__References__* http://www.cs.cornell.edu/~asdas/research/dsn02-SWIM.pdf
+__References:__
+- [SWIM: Scalable Weakly-consistent Infection-style Process Group Membership Protocol](https://ieeexplore.ieee.org/document/1028914) (Das et al., 2002)
+- [Lifeguard: Local Health Awareness for More Accurate Failure Detection](https://arxiv.org/abs/1707.00788) (Dadgar et al., 2017)
 
 (__WARNING:__ This project is untested in production environments. Do not use in production.)
 
+### Project Status
+
+This project is still under active development and as such the API may change without warning.
+
 ### Intro
 
-This Application is an Erlang implementation of the
+This application is an Erlang implementation of the
 Scalable Weakly-consistent Infection-style Process Group
 Membership Protocol (SWIM). As the title implies, SWIM provides
 weakly-consistent knowledge of process group membership information to all
@@ -23,10 +29,6 @@ of members in the group
 - Constant time to first-detection of a faulty process regardless of
 the number of members in the group
 - Low false-positive failure detection rate
-
-### Project Status
-
-This project is still under active development and as such the API may change without warning.
 
 ### Use Cases
 
@@ -93,13 +95,34 @@ modified the protocol to support both UDP and TCP:
 
 ### Lifeguard
 
-We've also included some of the improvements outlined in the [Lifeguard](https://arxiv.org/abs/1707.00788) paper from Hashicorp. You can also find more information about their research on [their website](https://www.hashicorp.com/blog/making-gossip-more-robust-with-lifeguard). On a local 5 node cluster, we have observed a reduction in false positives rates during the threshold experiment. More details of the results will be provided when we have time to conduct a more scientific experiement with this implementation.
+This implementation includes improvements from the
+[Lifeguard](https://arxiv.org/abs/1707.00788) paper by HashiCorp. Lifeguard
+introduces local health awareness to reduce false positive failure detections
+caused by slow message processing. The following Lifeguard extensions are
+implemented:
+
+- **Local Health Aware Probe (LHA-Probe)** - Dynamically scales the probe
+  interval and timeout based on a Local Health Multiplier (LHM), a saturating
+  counter that tracks recent failures, missed NACKs, and refutations.
+- **Local Health Aware Suspicion (LHA-Suspicion)** - Replaces fixed suspicion
+  timeouts with dynamic timeouts that decrease logarithmically as independent
+  suspicion confirmations are received.
+- **NACK messages** - Proxies send negative acknowledgments when indirect probes
+  fail, providing feedback to the initiator about network health.
+- **Buddy System** - Prioritizes piggybacking suspect messages about the target
+  of a probe, giving suspected members earlier opportunity to refute.
 
 ### Build
 
-We require OTP-19.x and an OpenSSL that supports AES-GCM. The default on OSX
-does not include support for AES-GCM, so it's recommended you use `homebrew` to
-install a newer version of OpenSSL and compile OTP linking to the OpenSSL managed
-by `homebrew`. Include `--with-ssl=/usr/local/opt/openssl` when compiling OTP.
+Requires OTP 27+ and rebar3. A nix flake is provided for reproducible builds:
 
+    nix develop
 
+Or if using direnv, allow the `.envrc`:
+
+    direnv allow
+
+Then build and test:
+
+    rebar3 compile
+    rebar3 ct
