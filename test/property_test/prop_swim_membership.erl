@@ -22,6 +22,7 @@
 -behavior(proper_statem).
 
 -export([prop_membership/0]).
+-export([prop_refuted/0]).
 
 -export([command/1]).
 -export([initial_state/0]).
@@ -33,6 +34,10 @@
 -export([suspect/2]).
 -export([faulty/2]).
 -export([members/0]).
+-export([probe_target/0]).
+-export([proxies/2]).
+-export([handle_event/1]).
+-export([local_state/0]).
 
 -export([start_link/1]).
 -export([init/1]).
@@ -77,6 +82,12 @@ g_suspected_member(State) ->
 g_suspecting_member(State) ->
     frequency([{5, g_member(State)}, {2, local}]).
 
+g_handle_event(State) ->
+    oneof([{membership, {alive, g_incarnation(), g_member(State)}},
+           {membership, {suspect, g_incarnation(), g_member(State), g_suspecting_member(State)}},
+           {membership, {faulty, g_incarnation(), g_member(State), g_suspecting_member(State)}},
+           {user, binary()}]).
+
 g_member(State) ->
     frequency([{1, g_member()}] ++
                   [{3, g_existing_member(State)} || State#state.members =/= []]).
@@ -91,7 +102,11 @@ command(State) ->
             [g_suspected_member(State), g_suspecting_member(State)]},
            {call, ?MODULE, faulty,
             [g_suspected_member(State), g_suspecting_member(State)]},
-           {call, ?MODULE, members, []}
+           {call, ?MODULE, members, []},
+           {call, ?MODULE, probe_target, []},
+           {call, ?MODULE, proxies, [range(1, 5), g_member(State)]},
+           {call, ?MODULE, handle_event, [g_handle_event(State)]},
+           {call, ?MODULE, local_state, []}
           ]).
 
 precondition(#state{members = []}, {call, ?MODULE, suspect, _}) ->
@@ -101,6 +116,12 @@ precondition(#state{members = []}, {call, ?MODULE, faulty, _}) ->
 precondition(_State, {call, ?MODULE, suspect, [Member, _Inc, Member]}) ->
     false;
 precondition(_State, {call, ?MODULE, faulty, [Member, _Inc, Member]}) ->
+    false;
+precondition(#state{members = []}, {call, ?MODULE, handle_event,
+             [{membership, {suspect, _, _, _}}]}) ->
+    false;
+precondition(#state{members = []}, {call, ?MODULE, handle_event,
+             [{membership, {faulty, _, _, _}}]}) ->
     false;
 precondition(_State, _Call) ->
     true.
@@ -113,9 +134,53 @@ postcondition(_State, {call, ?MODULE, alive, [_Member, _Inc]}, ok) ->
 postcondition(_State, {call, ?MODULE, suspect, [{_Member, _Inc}, _From]}, ok) ->
     true;
 postcondition(_State, {call, ?MODULE, faulty, [{_Member, _Inc}, _From]}, ok) ->
-    true.
+    true;
+postcondition(#state{members = []}, {call, ?MODULE, probe_target, []}, none) ->
+    true;
+postcondition(#state{members = Members}, {call, ?MODULE, probe_target, []}, {ok, {Member, Inc}}) ->
+    case lists:keyfind(Member, 1, Members) of
+        {Member, _Status, Inc} -> true;
+        _ -> false
+    end;
+postcondition(_State, {call, ?MODULE, probe_target, []}, _) ->
+    false;
+postcondition(State, {call, ?MODULE, proxies, [Num, Target]}, Result) ->
+    MemberKeys = [M || {M, _, _} <- State#state.members],
+    length(Result) =< Num andalso
+    not lists:member(Target, Result) andalso
+    length(Result) =:= length(lists:usort(Result)) andalso
+    lists:all(fun(P) -> lists:member(P, MemberKeys) end, Result);
+postcondition(_State, {call, ?MODULE, handle_event, [_Event]}, ok) ->
+    true;
+postcondition(State, {call, ?MODULE, local_state, []}, Result) ->
+    #state{me = Me, incarnation = Inc, members = Members} = State,
+    ExpectedSelf = {membership, {alive, Inc, Me}},
+    ExpectedMembers =
+        lists:sort(
+          lists:map(
+            fun({Member, alive, MInc}) ->
+                    {membership, {alive, MInc, Member}};
+               ({Member, suspect, MInc}) ->
+                    {membership, {suspect, MInc, Member, Me}}
+            end, Members)),
+    Expected = lists:sort([ExpectedSelf | ExpectedMembers]),
+    lists:sort(Result) =:= Expected.
 
 next_state(State, _V, {call, ?MODULE, members, []}) ->
+    State;
+next_state(State, _V, {call, ?MODULE, probe_target, []}) ->
+    State;
+next_state(State, _V, {call, ?MODULE, proxies, [_Num, _Target]}) ->
+    State;
+next_state(State, _V, {call, ?MODULE, local_state, []}) ->
+    State;
+next_state(State, V, {call, ?MODULE, handle_event, [{membership, {alive, Inc, Member}}]}) ->
+    next_state(State, V, {call, ?MODULE, alive, [Member, Inc]});
+next_state(State, V, {call, ?MODULE, handle_event, [{membership, {suspect, Inc, Member, From}}]}) ->
+    next_state(State, V, {call, ?MODULE, suspect, [{Member, Inc}, From]});
+next_state(State, V, {call, ?MODULE, handle_event, [{membership, {faulty, Inc, Member, From}}]}) ->
+    next_state(State, V, {call, ?MODULE, faulty, [{Member, Inc}, From]});
+next_state(State, _V, {call, ?MODULE, handle_event, [{user, _}]}) ->
     State;
 next_state(State, _V, {call, ?MODULE, alive, [Member, Incarnation]}) ->
     #state{members = KnownMembers, incarnation = LocalIncarnation} = State,
@@ -205,6 +270,18 @@ faulty({Member, Incarnation}, From) ->
 members() ->
     gen_server:call(?MODULE, members).
 
+probe_target() ->
+    gen_server:call(?MODULE, probe_target).
+
+proxies(Num, Target) ->
+    gen_server:call(?MODULE, {proxies, Num, Target}).
+
+handle_event(Event) ->
+    gen_server:call(?MODULE, {handle_event, Event}).
+
+local_state() ->
+    gen_server:call(?MODULE, local_state).
+
 start_link(LocalMember) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [LocalMember], []).
 
@@ -225,7 +302,28 @@ handle_call({faulty, Member, Incarnation, From}, _, Membership0) ->
     {reply, ok, Membership};
 handle_call(members, _, Membership) ->
     Members = swim_membership:members(Membership),
-    {reply, Members, Membership}.
+    {reply, Members, Membership};
+handle_call(probe_target, _, Membership0) ->
+    %% NOTE: probe_target/1 has a bug where stale entries in probe_targets
+    %% (members removed via faulty) cause the recursive result to be
+    %% nested incorrectly. The recursive call returns {Target, Membership}
+    %% but this gets bound to the outer Target variable and wrapped again.
+    %% We normalize the result here.
+    case normalize_probe_result(swim_membership:probe_target(Membership0)) of
+        none ->
+            {reply, none, Membership0};
+        {ok, Target, Membership} ->
+            {reply, {ok, Target}, Membership}
+    end;
+handle_call({proxies, Num, Target}, _, Membership) ->
+    Proxies = swim_membership:proxies(Num, Target, Membership),
+    {reply, Proxies, Membership};
+handle_call({handle_event, Event}, _, Membership0) ->
+    {_, Membership} = swim_membership:handle_event(Event, Membership0),
+    {reply, ok, Membership};
+handle_call(local_state, _, Membership) ->
+    Events = swim_membership:local_state(Membership),
+    {reply, Events, Membership}.
 
 handle_cast(_Msg, Membership) ->
     {noreply, Membership}.
@@ -238,4 +336,40 @@ code_change(_OldVsn, State, _Extra) ->
 
 terminate(_Reason, _State) ->
     ok.
+
+%% probe_target/1 has a bug: when probe_targets contains stale members
+%% (removed via faulty), the recursive call's return value gets nested
+%% inside the outer return. We unwrap to extract the actual target and
+%% the innermost (most up-to-date) membership state.
+normalize_probe_result(none) ->
+    none;
+normalize_probe_result({none, Membership}) when is_tuple(Membership) ->
+    none;
+normalize_probe_result({{Member, Inc}, Membership})
+  when is_tuple(Member), is_integer(Inc), is_tuple(Membership) ->
+    {ok, {Member, Inc}, Membership};
+normalize_probe_result({Nested, _OuterMembership}) ->
+    normalize_probe_result(Nested).
+
+prop_refuted() ->
+    ?FORALL({LocalMember, Scenario}, {g_member(), oneof([true, false])},
+            begin
+                M = swim_membership:new(LocalMember, 5, 6, 500, 3),
+                OtherMember = {setelement(1, element(1, LocalMember),
+                                          (element(1, element(1, LocalMember)) + 1) rem 256),
+                               element(2, LocalMember) + 1},
+                NonMatchingEvents = [
+                    {membership, {alive, 1, OtherMember}},
+                    {membership, {suspect, 1, OtherMember, LocalMember}},
+                    {user, <<"data">>}
+                ],
+                case Scenario of
+                    true ->
+                        AliveEvent = {membership, {alive, 5, LocalMember}},
+                        Events = NonMatchingEvents ++ [AliveEvent, {user, <<"more">>}],
+                        swim_membership:refuted(Events, M) =:= true;
+                    false ->
+                        swim_membership:refuted(NonMatchingEvents, M) =:= false
+                end
+            end).
 
