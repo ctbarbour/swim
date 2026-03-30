@@ -45,29 +45,28 @@ init([]) ->
     Membership      = swim_membership:new(LocalMember, Alpha, Beta, ProbeTimeout, SuspicionFactor),
     Broadcasts      = swim_broadcasts:new(Retransmits, MaxMessageSize),
     Awareness       = swim_awareness:new(AwarenessCount),
+    Keyring = swim_keyring:new(get_key()),
     StateOpts = #{
       protocol_period  => ProtocolPeriod,
       probe_timeout    => ProbeTimeout,
       ack_timeout      => AckTimeout,
+      nack_timeout     => NackTimeout,
       num_proxies      => NumProxies
      },
-    State = #{id => state,
-              start => {swim_state, start_link, [Membership, Broadcasts, Awareness, StateOpts]}},
-    Keyring = swim_keyring:new(get_key()),
-    Failure = #{id => failure,
-                start => {swim_failure, start_link,
-                          [LocalMember, Keyring, AckTimeout, NackTimeout]}},
-    PushPull = #{id => pushpull,
-                 start => {swim_pushpull_sup, start_link, [ListenIP, ListenPort]}},
-    Metrics = #{id => metrics,
-                start => {swim_metrics, start_link, []}},
     Subscriptions = #{id => subscriptions,
                       start => {swim_subscriptions, start_link, []}},
+    Metrics = #{id => metrics,
+                start => {swim_metrics, start_link, []}},
+    State = #{id => state,
+              start => {swim_state, start_link,
+                        [LocalMember, Keyring, Membership, Broadcasts, Awareness, StateOpts]}},
+    PushPull = #{id => pushpull,
+                 start => {swim_pushpull_sup, start_link, [ListenIP, ListenPort]}},
     Flags = #{strategy => rest_for_one,
               intensity => 5,
               period => 900
              },
-    {ok, {Flags, [State, Failure, PushPull, Subscriptions, Metrics]}}.
+    {ok, {Flags, [Subscriptions, Metrics, State, PushPull]}}.
 
 read_key_file({ok, KeyFile}) ->
     {ok, EncodedKey} = file:read_file(KeyFile),

@@ -1,4 +1,4 @@
--module(swim_failure_SUITE).
+-module(swim_protocol_SUITE).
 
 -include_lib("common_test/include/ct.hrl").
 

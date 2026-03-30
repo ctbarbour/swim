@@ -57,10 +57,11 @@
 
 -define(HEADER, 1).
 
--type ack()          :: {ack, swim_failure:sequence(), swim:member()}.
--type nack()         :: {nack, swim_failure:sequence(), swim:member()}.
--type ping()         :: {ping, swim_failure:sequence(), swim:member()}.
--type ping_req()     :: {ping_req, swim_failure:sequence(), swim:member()}.
+-type sequence()     :: non_neg_integer().
+-type ack()          :: {ack, sequence(), swim:member()}.
+-type nack()         :: {nack, sequence(), swim:member()}.
+-type ping()         :: {ping, sequence(), swim:member()}.
+-type ping_req()     :: {ping_req, sequence(), swim:member()}.
 -type swim_message() :: ack() | nack() | ping() | ping_req().
 
 -export_type([swim_message/0]).
