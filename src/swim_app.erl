@@ -25,7 +25,7 @@
 -export([stop/1]).
 
 start(_Type, _Args) ->
-    swim_sup:start_link().
+    swim_sup:start_link(default, #{}).
 
 stop(_State) ->
     ok.

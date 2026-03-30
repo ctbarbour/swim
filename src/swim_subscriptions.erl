@@ -21,11 +21,11 @@
 -module(swim_subscriptions).
 -behavior(gen_event).
 
--export([start_link/0]).
+-export([start_link/0, start_link/1]).
 
--export([subscribe/2]).
--export([unsubscribe/2]).
--export([publish/1]).
+-export([subscribe/2, subscribe/3]).
+-export([unsubscribe/2, unsubscribe/3]).
+-export([publish/1, publish/2]).
 
 -export([init/1]).
 -export([handle_event/2]).
@@ -41,24 +41,36 @@
          }).
 
 start_link() ->
-    gen_event:start_link({local, ?MODULE}).
+    start_link(default).
+
+start_link(Name) ->
+    gen_event:start_link({local, swim_name:proc_name(Name, subscriptions)}).
 
 subscribe(EventCategory, Pid) ->
-    gen_event:add_handler(?MODULE, ?MODULE, [EventCategory, Pid]).
+    subscribe(swim_name:proc_name(default, subscriptions), EventCategory, Pid).
+
+subscribe(ServerRef, EventCategory, Pid) ->
+    gen_event:add_handler(ServerRef, ?MODULE, [EventCategory, Pid]).
 
 unsubscribe(EventCategory, Pid) ->
-    gen_event:delete_handler(?MODULE, ?MODULE, [EventCategory, Pid]).
+    unsubscribe(swim_name:proc_name(default, subscriptions), EventCategory, Pid).
 
-publish(Events) when is_list(Events) ->
-    [publish(Event) || Event <- Events],
+unsubscribe(ServerRef, EventCategory, Pid) ->
+    gen_event:delete_handler(ServerRef, ?MODULE, [EventCategory, Pid]).
+
+publish(Events) ->
+    publish(swim_name:proc_name(default, subscriptions), Events).
+
+publish(ServerRef, Events) when is_list(Events) ->
+    [publish(ServerRef, Event) || Event <- Events],
     ok;
-publish({membership, {alive, _, M}}) ->
-    gen_event:notify(?MODULE, {membership, {alive, M}});
-publish({membership, {faulty, _, M, T}}) ->
-    gen_event:notify(?MODULE, {membership, {faulty, M, T}});
-publish({user, Event}) ->
-    gen_event:notify(?MODULE, {user, Event});
-publish(_) ->
+publish(ServerRef, {membership, {alive, _, M}}) ->
+    gen_event:notify(ServerRef, {membership, {alive, M}});
+publish(ServerRef, {membership, {faulty, _, M, T}}) ->
+    gen_event:notify(ServerRef, {membership, {faulty, M, T}});
+publish(ServerRef, {user, Event}) ->
+    gen_event:notify(ServerRef, {user, Event});
+publish(_ServerRef, _) ->
     ok.
 
 init([EventCategory, Pid]) ->

@@ -21,10 +21,10 @@
 -module(swim_metrics).
 -behavior(gen_event).
 
--export([start_link/0]).
--export([notify/1]).
--export([subscribe/1]).
--export([unsubscribe/1]).
+-export([start_link/0, start_link/1]).
+-export([notify/1, notify/2]).
+-export([subscribe/1, subscribe/2]).
+-export([unsubscribe/1, unsubscribe/2]).
 
 -export([init/1]).
 -export([handle_event/2]).
@@ -34,16 +34,28 @@
 -export([terminate/2]).
 
 start_link() ->
-    gen_event:start_link({local, ?MODULE}).
+    start_link(default).
+
+start_link(Name) ->
+    gen_event:start_link({local, swim_name:proc_name(Name, metrics)}).
 
 subscribe(Pid) ->
-    gen_event:add_handler(?MODULE, ?MODULE, [Pid]).
+    subscribe(swim_name:proc_name(default, metrics), Pid).
+
+subscribe(ServerRef, Pid) ->
+    gen_event:add_handler(ServerRef, ?MODULE, [Pid]).
 
 unsubscribe(Pid) ->
-    gen_event:delete_handler(?MODULE, ?MODULE, [Pid]).
+    unsubscribe(swim_name:proc_name(default, metrics), Pid).
+
+unsubscribe(ServerRef, Pid) ->
+    gen_event:delete_handler(ServerRef, ?MODULE, [Pid]).
 
 notify(Event) ->
-    gen_event:notify(?MODULE, Event).
+    notify(swim_name:proc_name(default, metrics), Event).
+
+notify(ServerRef, Event) ->
+    gen_event:notify(ServerRef, Event).
 
 init([Subscriber]) ->
     erlang:monitor(process, Subscriber),

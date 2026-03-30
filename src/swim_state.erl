@@ -21,6 +21,16 @@
 -module(swim_state).
 -behavior(gen_server).
 
+%% Named instance API
+-export([start_link/7]).
+-export([stop/1]).
+-export([local_member/1]).
+-export([local_state/1]).
+-export([members/1]).
+-export([handle_event/2]).
+-export([publish/2]).
+
+%% Default instance API (backwards compatibility)
 -export([start_link/6]).
 -export([stop/0]).
 -export([local_member/0]).
@@ -37,6 +47,9 @@
 -export([terminate/2]).
 
 -record(state, {
+          %% Instance identity
+          name                   :: atom(),
+
           %% Protocol parameters
           protocol_period        :: pos_integer(),
           ack_timeout            :: pos_integer(),
@@ -78,36 +91,57 @@
 -type probe()    :: #probe{}.
 -type sequence() :: non_neg_integer().
 
+%%% ===================================================================
+%%% Named instance API
+%%% ===================================================================
+
+start_link(Name, LocalMember, Keyring, Membership, Broadcasts, Awareness, Opts) ->
+    Args = [Name, LocalMember, Keyring, Membership, Broadcasts, Awareness, Opts],
+    gen_server:start_link({local, swim_name:proc_name(Name, state)}, ?MODULE, Args, []).
+
+stop(ServerRef) ->
+    gen_server:stop(ServerRef).
+
+local_member(ServerRef) ->
+    gen_server:call(ServerRef, local_member).
+
+local_state(ServerRef) ->
+    gen_server:call(ServerRef, local_state).
+
+members(ServerRef) ->
+    gen_server:call(ServerRef, members).
+
+publish(ServerRef, Event) ->
+    gen_server:cast(ServerRef, {publish, Event}).
+
+handle_event(ServerRef, Event) ->
+    gen_server:cast(ServerRef, {broadcast_event, Event}).
+
+%%% ===================================================================
+%%% Default instance API (backwards compatibility)
+%%% ===================================================================
+
 start_link(LocalMember, Keyring, Membership, Broadcasts, Awareness, Opts) ->
-    Args = [LocalMember, Keyring, Membership, Broadcasts, Awareness, Opts],
-    gen_server:start_link({local, ?MODULE}, ?MODULE, Args, []).
+    start_link(default, LocalMember, Keyring, Membership, Broadcasts, Awareness, Opts).
 
--spec stop() -> ok.
+stop() -> stop(swim_name:proc_name(default, state)).
+local_member() -> local_member(swim_name:proc_name(default, state)).
+local_state() -> local_state(swim_name:proc_name(default, state)).
+members() -> members(swim_name:proc_name(default, state)).
+publish(Event) -> publish(swim_name:proc_name(default, state), Event).
+handle_event(Event) -> handle_event(swim_name:proc_name(default, state), Event).
 
-stop() ->
-    gen_server:stop(?MODULE).
-
-local_member() ->
-    gen_server:call(?MODULE, local_member).
-
-local_state() ->
-    gen_server:call(?MODULE, local_state).
-
-members() ->
-    gen_server:call(?MODULE, members).
-
-publish(Event) ->
-    gen_server:cast(?MODULE, {publish, Event}).
-
-handle_event(Event) ->
-    gen_server:cast(?MODULE, {broadcast_event, Event}).
+%%% ===================================================================
+%%% gen_server callbacks
+%%% ===================================================================
 
 %% @private
-init([{_, Port} = LocalMember, Keyring, Membership, Broadcasts, Awareness, Opts]) ->
+init([Name, {_, Port} = LocalMember, Keyring, Membership, Broadcasts, Awareness, Opts]) ->
     SocketOpts = [binary, {active, 16}],
     {ok, Socket} = swim_socket:open(Port, SocketOpts),
     State =
         #state{
+           name            = Name,
            local_member    = LocalMember,
            keyring         = Keyring,
            socket          = Socket,
@@ -152,7 +186,7 @@ handle_info({suspicion_timeout, Member, SuspectedAt}, State) ->
         swim_membership:faulty(Member, SuspectedAt, local, State#state.membership),
     Membership = handle_timer_actions(TimerActions, Membership0),
     Broadcasts = swim_broadcasts:insert(Events, State#state.broadcasts),
-    ok = swim_subscriptions:publish(Events),
+    ok = publish_events(Events, State),
     {noreply, State#state{membership = Membership, broadcasts = Broadcasts}};
 handle_info({udp_passive, Socket}, #state{socket = Socket} = State) ->
     ok = swim_socket:setopts(Socket, [{active, 16}]),
@@ -216,7 +250,7 @@ send_probe(Target, AckTimeout, ProbeTimeout, State)
                ack_timer   = AckTimer,
                probe_timer = ProbeTimer
               },
-    swim_metrics:notify({probe, Target}),
+    notify_metrics({probe, Target}, State),
     NewState#state{probe = Probe, sequence = NextSequence}.
 
 %%% ===================================================================
@@ -228,7 +262,7 @@ handle_packet(Packet, Peer, State) ->
         {ok, PlainText} ->
             try
                 {Message, Events} = swim_messages:decode(PlainText),
-                swim_metrics:notify({rx, iolist_size(Packet)}),
+                notify_metrics({rx, iolist_size(Packet)}, State),
                 State1 = handle_events(Events, State),
                 handle_message(Message, Peer, State1)
             catch
@@ -240,16 +274,16 @@ handle_packet(Packet, Peer, State) ->
     end.
 
 handle_message({ack, Sequence, Terminal}, _Peer, State) ->
-    swim_metrics:notify({ack, Terminal}),
+    notify_metrics({ack, Terminal}, State),
     handle_ack(Sequence, Terminal, State);
 handle_message({nack, Sequence, Terminal}, Peer, State) ->
-    swim_metrics:notify({nack, Terminal, Peer}),
+    notify_metrics({nack, Terminal, Peer}, State),
     handle_nack(Sequence, Terminal, State);
 handle_message({ping, Sequence, Target}, Peer, State) ->
-    swim_metrics:notify({ping, Peer}),
+    notify_metrics({ping, Peer}, State),
     handle_ping(Target, Sequence, Peer, State);
 handle_message({ping_req, Sequence, Terminal}, Peer, State) ->
-    swim_metrics:notify({ping_req, Terminal, Peer}),
+    notify_metrics({ping_req, Terminal, Peer}, State),
     handle_ping_req(Sequence, Terminal, Peer, State).
 
 handle_ack(Sequence, Responder, #state{probe = Probe} = State)
@@ -301,7 +335,7 @@ handle_ping_req(OriginSequence, Terminal, Origin, State) ->
 
 handle_ack_timeout(Target, Sequence, #state{probe = Probe} = State)
   when Probe#probe.target =:= Target andalso Probe#probe.sequence =:= Sequence ->
-    swim_metrics:notify({ack_timeout, Target}),
+    notify_metrics({ack_timeout, Target}, State),
     swim_time:cancel_timer(Probe#probe.ack_timer, [{async, true}, {info, false}]),
     Msg = {ping_req, Sequence, Probe#probe.target},
     Proxies = swim_membership:proxies(State#state.num_proxies, Target, State#state.membership),
@@ -310,7 +344,7 @@ handle_ack_timeout(Target, Sequence, #state{probe = Probe} = State)
 handle_ack_timeout(Target, Sequence, State) ->
     case maps:take({Target, Sequence}, State#state.ping_reqs) of
         {_, PingReqs} ->
-            swim_metrics:notify({ack_timeout, Target}),
+            notify_metrics({ack_timeout, Target}, State),
             State#state{ping_reqs = PingReqs};
         error ->
             State
@@ -319,7 +353,7 @@ handle_ack_timeout(Target, Sequence, State) ->
 handle_nack_timeout(Target, Sequence, State) ->
     case maps:find({Target, Sequence}, State#state.ping_reqs) of
         {ok, #ping_req{origin = Origin, sequence = OriginSequence}} ->
-            swim_metrics:notify({nack_timeout, Target, Origin}),
+            notify_metrics({nack_timeout, Target, Origin}, State),
             Msg = {nack, OriginSequence, Origin},
             send(Origin, Msg, State);
         error ->
@@ -328,7 +362,7 @@ handle_nack_timeout(Target, Sequence, State) ->
 
 handle_probe_timeout(Target, Sequence, #state{probe = Probe} = State)
   when Probe#probe.target =:= Target andalso Probe#probe.sequence =:= Sequence ->
-    swim_metrics:notify({probe_timeout, Target}),
+    notify_metrics({probe_timeout, Target}, State),
     #state{current_probe = {Target, Incarnation}} = State,
     handle_member_probe_timeout(Target, Incarnation, Probe#probe.missing_nacks,
                                 State#state{probe = undefined});
@@ -344,7 +378,7 @@ handle_member_ack(Member, Incarnation, State) ->
     {Events, TimerActions, Membership1} = swim_membership:alive(Member, Incarnation, Membership0),
     Membership = handle_timer_actions(TimerActions, Membership1),
     Broadcasts = swim_broadcasts:insert(Events, Broadcasts0),
-    ok = swim_subscriptions:publish(Events),
+    ok = publish_events(Events, State),
     Awareness = swim_awareness:success(Awareness0),
     State#state{
       membership    = Membership,
@@ -358,7 +392,7 @@ handle_member_probe_timeout(Member, Incarnation, MissedNacks, State) ->
     {Events, TimerActions, Membership1} = swim_membership:suspect(Member, Incarnation, local, Membership0),
     Membership = handle_timer_actions(TimerActions, Membership1),
     Broadcasts = swim_broadcasts:insert(Events, Broadcasts0),
-    ok = swim_subscriptions:publish(Events),
+    ok = publish_events(Events, State),
     Awareness = swim_awareness:failure(MissedNacks + 1, Awareness0),
     State#state{
       current_probe = undefined,
@@ -376,7 +410,7 @@ apply_membership_event(Event, State) ->
             false -> State#state.awareness
         end,
     Broadcasts = swim_broadcasts:insert(Events, State#state.broadcasts),
-    ok = swim_subscriptions:publish(Events),
+    ok = publish_events(Events, State),
     State#state{membership = Membership, broadcasts = Broadcasts, awareness = Awareness}.
 
 %%% ===================================================================
@@ -388,7 +422,8 @@ handle_events(Events, State) ->
         lists:partition(fun({membership, _}) -> true; (_) -> false end, Events),
     State1 = lists:foldl(fun(Event, S) -> apply_membership_event(Event, S) end,
                          State, MembershipEvents),
-    [swim_subscriptions:publish(Event) || Event <- UserEvents],
+    ServerRef = swim_name:proc_name(State1#state.name, subscriptions),
+    [swim_subscriptions:publish(ServerRef, Event) || Event <- UserEvents],
     State1.
 
 %%% ===================================================================
@@ -403,7 +438,7 @@ send({DestIp, DestPort} = Target, Msg, State) ->
     Broadcasts2 = swim_broadcasts:prune(Retransmits, Broadcasts1),
     Payload = encrypt(swim_messages:encode({Msg, Events}), State),
     ok = swim_socket:send(State#state.socket, DestIp, DestPort, Payload),
-    swim_metrics:notify({tx, iolist_size(Payload)}),
+    notify_metrics({tx, iolist_size(Payload)}, State),
     State#state{broadcasts = Broadcasts2}.
 
 encrypt(Msg, State) ->
@@ -411,6 +446,16 @@ encrypt(Msg, State) ->
 
 decrypt(CipherText, State) ->
     swim_keyring:decrypt(CipherText, State#state.keyring).
+
+%%% ===================================================================
+%%% Instance-aware event publishing and metrics
+%%% ===================================================================
+
+publish_events(Events, #state{name = Name}) ->
+    swim_subscriptions:publish(swim_name:proc_name(Name, subscriptions), Events).
+
+notify_metrics(Event, #state{name = Name}) ->
+    swim_metrics:notify(swim_name:proc_name(Name, metrics), Event).
 
 %%% ===================================================================
 %%% Timers

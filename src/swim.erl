@@ -17,13 +17,23 @@
 
 -module(swim).
 
+%% Named instance API
+-export([start/2]).
+-export([stop/1]).
+-export([join/2]).
+-export([members/1]).
+-export([myself/1]).
+-export([publish/2]).
+-export([subscribe/2]).
+-export([unsubscribe/2]).
+
+%% Default instance API (backwards compatibility)
 -export([join/1]).
 -export([members/0]).
 -export([myself/0]).
 -export([publish/1]).
 -export([subscribe/1]).
 -export([unsubscribe/1]).
--export([setup/0]).
 
 -type member()           :: {inet:ip_address(), inet:port_number()}.
 -type incarnation()      :: non_neg_integer().
@@ -40,34 +50,68 @@
 -export_type([user_event/0]).
 -export_type([membership_event/0]).
 
+%%% ===================================================================
+%%% Named instance API
+%%% ===================================================================
+
+-spec start(atom(), map()) -> {ok, pid()} | {error, term()}.
+
+start(Name, Config) ->
+    swim_sup:start_link(Name, Config).
+
+-spec stop(atom()) -> ok.
+
+stop(Name) ->
+    case whereis(swim_name:proc_name(Name, sup)) of
+        undefined -> ok;
+        Pid ->
+            Ref = erlang:monitor(process, Pid),
+            exit(Pid, shutdown),
+            receive
+                {'DOWN', Ref, process, Pid, _} -> ok
+            end
+    end.
+
+join(Name, Seed) when is_atom(Name) ->
+    swim_pushpull:join(Name, Seed, #{}).
+
+members(Name) when is_atom(Name) ->
+    [M || {M, _S, _I} <- swim_state:members(swim_name:proc_name(Name, state))].
+
+myself(Name) when is_atom(Name) ->
+    swim_state:local_member(swim_name:proc_name(Name, state)).
+
+publish(Name, Msg) when is_atom(Name), is_binary(Msg) ->
+    swim_state:publish(swim_name:proc_name(Name, state), Msg).
+
+subscribe(Name, metrics) when is_atom(Name) ->
+    swim_metrics:subscribe(swim_name:proc_name(Name, metrics), self());
+subscribe(Name, EventCategory) when is_atom(Name) ->
+    swim_subscriptions:subscribe(swim_name:proc_name(Name, subscriptions), EventCategory, self()).
+
+unsubscribe(Name, metrics) when is_atom(Name) ->
+    swim_metrics:unsubscribe(swim_name:proc_name(Name, metrics), self());
+unsubscribe(Name, EventCategory) when is_atom(Name) ->
+    swim_subscriptions:unsubscribe(swim_name:proc_name(Name, subscriptions), EventCategory, self()).
+
+%%% ===================================================================
+%%% Default instance API (backwards compatibility)
+%%% ===================================================================
+
 join(Seed) ->
-    swim_pushpull:join(Seed, #{}).
+    join(default, Seed).
 
 members() ->
-    [M || {M, _S, _I} <- swim_state:members()].
+    members(default).
 
 myself() ->
-    swim_state:local_member().
+    myself(default).
 
 publish(Msg) when is_binary(Msg) ->
-    swim_state:publish(Msg).
+    publish(default, Msg).
 
-subscribe(metrics) ->
-    swim_metrics:subscribe(self());
 subscribe(EventCategory) ->
-    swim_subscriptions:subscribe(EventCategory, self()).
+    subscribe(default, EventCategory).
 
-unsubscribe(metrics) ->
-    swim_metrics:unsubscribe(self());
 unsubscribe(EventCategory) ->
-    swim_subscriptions:unsubscribe(EventCategory, self()).
-
-setup() ->
-    Key = base64:encode(crypto:strong_rand_bytes(32)),
-    BasePort = 5000,
-    Ms = lists:zip(
-           [{{127,0,0,1}, P} || P <- lists:seq(BasePort, length(nodes()) + BasePort)],
-           [node() | nodes()]),
-    [rpc:call(Node, application, set_env, [swim, port, Port]) || {{_, Port}, Node} <- Ms],
-    [rpc:call(Node, application, set_env, [swim, key, Key]) || Node <- [node() | nodes()]],
-    [rpc:call(Node, application, start, [swim]) || Node <- [node() | nodes()]].
+    unsubscribe(default, EventCategory).

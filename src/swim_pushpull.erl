@@ -1,9 +1,9 @@
 -module(swim_pushpull).
 -behavior(gen_server).
 
--export([join/2]).
--export([start_link/3]).
--export([accept/4]).
+-export([join/2, join/3]).
+-export([start_link/3, start_link/4]).
+-export([accept/5]).
 
 -export([init/1]).
 -export([handle_call/3]).
@@ -13,6 +13,7 @@
 -export([terminate/2]).
 
 -record(state, {
+          name         :: atom(),
           socket       :: inet:socket() | ssl:socket(),
           acceptors    :: ets:tab(),
           local_member :: swim:member(),
@@ -20,7 +21,11 @@
          }).
 
 join(Member, Opts) ->
-    LocalMember = swim_state:local_member(),
+    join(default, Member, Opts).
+
+join(Name, Member, Opts) ->
+    StateRef = swim_name:proc_name(Name, state),
+    LocalMember = swim_state:local_member(StateRef),
     Transport = maps:get(transport, Opts, tcp),
     TransportOpts = [binary, {packet, 4}, {active, false}, {nodelay, true}
                      | maps:get(transport_opts, Opts, [])],
@@ -33,7 +38,7 @@ join(Member, Opts) ->
                 {ok, Data} ->
                     swim_socket:close(Socket),
                     {push_pull, _RemoteMember, RemoteState} = decode(Data),
-                    merge_state(RemoteState),
+                    merge_state(Name, RemoteState),
                     ok;
                 Error ->
                     Error
@@ -62,16 +67,19 @@ retry_connect(Member, Transport, TransportOpts, Opts, Retries) ->
     end.
 
 start_link(IpAddr, Port, Opts) ->
-    gen_server:start_link(?MODULE, [IpAddr, Port, Opts], []).
+    start_link(default, IpAddr, Port, Opts).
 
-init([IpAddr, Port, Opts]) ->
+start_link(Name, IpAddr, Port, Opts) ->
+    gen_server:start_link(?MODULE, [Name, IpAddr, Port, Opts], []).
+
+init([Name, IpAddr, Port, Opts]) ->
     MinAcceptors = maps:get(min_acceptors, Opts, 2),
     TcpOpts = [binary, {packet, 4}, {ip, IpAddr},
                {reuseaddr, true}, {nodelay, true},
                {active, false}],
     {ok, Socket} = swim_socket:listen(tcp, Port, TcpOpts),
-    Acceptors = ets:new(accecptor, [private, set]),
-    State = #state{local_member = {IpAddr, Port}, socket = Socket,
+    Acceptors = ets:new(acceptor, [private, set]),
+    State = #state{name = Name, local_member = {IpAddr, Port}, socket = Socket,
                    acceptors = Acceptors, opts = Opts},
     [start_add_acceptor(State) || _ <- lists:seq(1, MinAcceptors)],
     {ok, State}.
@@ -100,7 +108,8 @@ terminate(_Reason, _State) ->
     ok.
 
 start_add_acceptor(State) ->
-    Args = [self(), State#state.local_member, State#state.socket, State#state.opts],
+    Args = [State#state.name, self(), State#state.local_member,
+            State#state.socket, State#state.opts],
     Pid = spawn_link(?MODULE, accept, Args),
     ets:insert(State#state.acceptors, {Pid}),
     ok.
@@ -109,39 +118,40 @@ remove_acceptor(State, Pid) ->
     ets:delete(State#state.acceptors, Pid),
     ok.
 
-accept(Server, LocalMember, ListenSocket, Opts) ->
+accept(Name, Server, LocalMember, ListenSocket, Opts) ->
     case catch swim_socket:accept(ListenSocket, Server, maps:get(accept_timeout, Opts, 10000)) of
         {ok, Socket} ->
-            read_message(LocalMember, Socket, Opts),
+            read_message(Name, LocalMember, Socket, Opts),
             swim_socket:close(Socket),
             ok;
         {error, timeout} ->
-            accept(Server, LocalMember, ListenSocket, Opts);
+            accept(Name, Server, LocalMember, ListenSocket, Opts);
         {error, econnaborted} ->
-            accept(Server, LocalMember, ListenSocket, Opts);
+            accept(Name, Server, LocalMember, ListenSocket, Opts);
         {error, {tls_alert, _}} ->
-            accept(Server, LocalMember, ListenSocket, Opts);
+            accept(Name, Server, LocalMember, ListenSocket, Opts);
         {error, closed} ->
             ok;
         {error, Reason} ->
             exit({error, Reason})
     end.
 
-read_message(LocalMember, Socket, Opts) ->
+read_message(Name, LocalMember, Socket, Opts) ->
     case swim_socket:recv(Socket, 0, maps:get(receive_timeout, Opts, 60000)) of
         {ok, Data} ->
-            handle_message(decode(Data), LocalMember, Socket);
+            handle_message(Name, decode(Data), LocalMember, Socket);
         {error, Reason} ->
             {error, Reason}
     end.
 
-handle_message({push_pull, RemoteMember, RemoteState}, LocalMember, Socket) ->
-    LocalState = swim_state:local_state(),
+handle_message(Name, {push_pull, RemoteMember, RemoteState}, LocalMember, Socket) ->
+    StateRef = swim_name:proc_name(Name, state),
+    LocalState = swim_state:local_state(StateRef),
     send_message({push_pull, LocalMember, LocalState}, Socket),
-    swim_metrics:notify({push_pull, RemoteMember}),
-    spawn_link(fun() -> merge_state(RemoteState) end),
+    swim_metrics:notify(swim_name:proc_name(Name, metrics), {push_pull, RemoteMember}),
+    spawn_link(fun() -> merge_state(Name, RemoteState) end),
     ok;
-handle_message(_Other, _LocalMember, _Socket) ->
+handle_message(_Name, _Other, _LocalMember, _Socket) ->
     ok.
 
 send_message(Message, Socket) ->
@@ -154,5 +164,6 @@ decode(Data) ->
 encode(Data) ->
     term_to_binary(Data).
 
-merge_state(RemoteState) ->
-    [swim_state:handle_event(Event) || Event <- RemoteState].
+merge_state(Name, RemoteState) ->
+    StateRef = swim_name:proc_name(Name, state),
+    [swim_state:handle_event(StateRef, Event) || Event <- RemoteState].

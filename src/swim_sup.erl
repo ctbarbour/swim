@@ -21,31 +21,34 @@
 -module(swim_sup).
 -behavior(supervisor).
 
--export([start_link/0]).
+-export([start_link/0, start_link/2]).
 -export([init/1]).
 
 start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    start_link(default, #{}).
 
-init([]) ->
-    ListenIP        = application:get_env(swim, ip, {127,0,0,1}),
-    ListenPort      = application:get_env(swim, port, 5000),
-    AckTimeout      = application:get_env(swim, ack_timeout, 100),
-    ProbeTimeout    = application:get_env(swim, probe_timeout, 500),
-    NackTimeout     = application:get_env(swim, nack_timeout, floor(ProbeTimeout * 0.8)),
-    ProtocolPeriod  = application:get_env(swim, protocol_period, 1000),
-    NumProxies      = application:get_env(swim, num_proxies, 3),
-    SuspicionFactor = application:get_env(swim, suspicion_factor, 3),
-    AwarenessCount  = application:get_env(swim, awareness_count, 8),
-    Alpha           = application:get_env(swim, alpha, 5),
-    Beta            = application:get_env(swim, beta, 6),
-    Retransmits     = application:get_env(swim, retransmit_factor, 3),
-    MaxMessageSize  = application:get_env(swim, max_message_size, 452),
+start_link(Name, Config) ->
+    supervisor:start_link({local, swim_name:proc_name(Name, sup)}, ?MODULE, [Name, Config]).
+
+init([Name, Config]) ->
+    ListenIP        = get_config(ip, Config, {127,0,0,1}),
+    ListenPort      = get_config(port, Config, 5000),
+    AckTimeout      = get_config(ack_timeout, Config, 100),
+    ProbeTimeout    = get_config(probe_timeout, Config, 500),
+    NackTimeout     = get_config(nack_timeout, Config, floor(ProbeTimeout * 0.8)),
+    ProtocolPeriod  = get_config(protocol_period, Config, 1000),
+    NumProxies      = get_config(num_proxies, Config, 3),
+    SuspicionFactor = get_config(suspicion_factor, Config, 3),
+    AwarenessCount  = get_config(awareness_count, Config, 8),
+    Alpha           = get_config(alpha, Config, 5),
+    Beta            = get_config(beta, Config, 6),
+    Retransmits     = get_config(retransmit_factor, Config, 3),
+    MaxMessageSize  = get_config(max_message_size, Config, 452),
     LocalMember     = {ListenIP, ListenPort},
     Membership      = swim_membership:new(LocalMember, Alpha, Beta, ProbeTimeout, SuspicionFactor),
     Broadcasts      = swim_broadcasts:new(Retransmits, MaxMessageSize),
     Awareness       = swim_awareness:new(AwarenessCount),
-    Keyring = swim_keyring:new(get_key()),
+    Keyring         = swim_keyring:new(get_key(Config)),
     StateOpts = #{
       protocol_period  => ProtocolPeriod,
       probe_timeout    => ProbeTimeout,
@@ -53,31 +56,42 @@ init([]) ->
       nack_timeout     => NackTimeout,
       num_proxies      => NumProxies
      },
-    Subscriptions = #{id => subscriptions,
-                      start => {swim_subscriptions, start_link, []}},
-    Metrics = #{id => metrics,
-                start => {swim_metrics, start_link, []}},
-    State = #{id => state,
+    Subscriptions = #{id => {Name, subscriptions},
+                      start => {swim_subscriptions, start_link, [Name]}},
+    Metrics = #{id => {Name, metrics},
+                start => {swim_metrics, start_link, [Name]}},
+    State = #{id => {Name, state},
               start => {swim_state, start_link,
-                        [LocalMember, Keyring, Membership, Broadcasts, Awareness, StateOpts]}},
-    PushPull = #{id => pushpull,
-                 start => {swim_pushpull_sup, start_link, [ListenIP, ListenPort]}},
+                        [Name, LocalMember, Keyring, Membership, Broadcasts, Awareness, StateOpts]}},
+    PushPull = #{id => {Name, pushpull},
+                 start => {swim_pushpull_sup, start_link, [Name, ListenIP, ListenPort]}},
     Flags = #{strategy => rest_for_one,
               intensity => 5,
               period => 900
              },
     {ok, {Flags, [Subscriptions, Metrics, State, PushPull]}}.
 
+get_config(Key, Config, Default) ->
+    case maps:find(Key, Config) of
+        {ok, Value} -> Value;
+        error -> application:get_env(swim, Key, Default)
+    end.
+
+get_key(Config) ->
+    case maps:find(key, Config) of
+        {ok, Base64Key} ->
+            [base64:decode(Base64Key)];
+        error ->
+            case application:get_env(swim, key) of
+                {ok, Base64Key} ->
+                    [base64:decode(Base64Key)];
+                undefined ->
+                    read_key_file(application:get_env(swim, keyfile))
+            end
+    end.
+
 read_key_file({ok, KeyFile}) ->
     {ok, EncodedKey} = file:read_file(KeyFile),
     [base64:decode(EncodedKey)];
 read_key_file(undefined) ->
     [crypto:strong_rand_bytes(32)].
-
-get_key() ->
-    case application:get_env(swim, key) of
-        {ok, Base64Key} ->
-            [base64:decode(Base64Key)];
-        undefined ->
-            read_key_file(application:get_env(swim, keyfile))
-    end.
