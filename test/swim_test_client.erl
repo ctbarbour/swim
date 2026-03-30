@@ -13,10 +13,10 @@
 -export([terminate/2]).
 
 -record(state, {
-          local_member,
-          keyring,
-          socket,
-          requests
+          local_member :: swim:member(),
+          keyring      :: swim_keyring:keyring(),
+          socket       :: inet:socket(),
+          requests     :: #{non_neg_integer() := {pid(), reference()}}
          }).
 
 start(LocalMember, Key) ->

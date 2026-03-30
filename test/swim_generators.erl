@@ -2,7 +2,12 @@
 
 -include_lib("proper/include/proper.hrl").
 
--compile([export_all]).
+-export([g_ip_address/0, g_port_number/0, g_incarnation/0]).
+-export([g_member/0, g_sequence/0]).
+-export([g_membership_event/0, g_suspect_event/0, g_alive_event/0, g_faulty_event/0]).
+-export([g_user_event/0, g_swim_event/0, g_swim_events/0]).
+-export([g_ack/0, g_nack/0, g_ping/0, g_ping_req/0, g_swim_message/0]).
+-export([swim_event/0, swim_message/0]).
 
 g_ip_address() ->
     ip_address().
