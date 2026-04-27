@@ -16,8 +16,8 @@
       devShells = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          erlang = pkgs.beam.interpreters.erlang_27;
-          beamPkgs = pkgs.beam.packages.erlang_27;
+          erlang = pkgs.beam.interpreters.erlang_28;
+          beamPkgs = pkgs.beam.packages.erlang_28;
         in
         {
           default = pkgs.mkShell {

@@ -17,7 +17,7 @@
           socket       :: inet:socket() | ssl:socket(),
           acceptors    :: ets:tab(),
           local_member :: swim:member(),
-          opts         :: maps:map()
+          opts         :: map()
          }).
 
 join(Member, Opts) ->
