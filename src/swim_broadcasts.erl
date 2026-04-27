@@ -65,7 +65,7 @@
           members     = []  :: [{non_neg_integer(), swim:membership_event()}],
           users       = []  :: [{non_neg_integer(), swim:user_event()}],
           retransmits       :: pos_integer(),
-          limit_fun         :: fun((swim:member_event() | swim:user_event()) -> pos_integer()),
+          limit_fun         :: fun((swim:swim_event()) -> pos_integer()),
           limit             :: pos_integer()
          }).
 
@@ -104,7 +104,7 @@ retransmit_limit(NumMembers, #broadcast{retransmits = Factor}) ->
 
 -spec take(Broadcasts0) -> {Events, Broadcasts} when
       Broadcasts0 :: broadcast(),
-      Events      :: [swim:membership_event() | swim:user_event()],
+      Events      :: [swim:swim_event()],
       Broadcasts  :: broadcast().
 
 take(#broadcast{limit = Limit, limit_fun = Fun, members = Members, users = Users} = Broadcast) ->
@@ -133,7 +133,7 @@ take(Limit, Fun, [], [{T, E} | Users], {B, M, U}) ->
 -spec take(Member, Broadcasts0) -> {Events, Broadcasts} when
       Member      :: swim:member(),
       Broadcasts0 :: broadcast(),
-      Events      :: [swim:membership_event() | swim:user_event()],
+      Events      :: [swim:swim_event()],
       Broadcasts  :: broadcast().
 
 take(Target, Broadcasts) ->

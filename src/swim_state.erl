@@ -60,12 +60,12 @@
           %% Membership state
           current_probe          :: undefined | {swim:member(), swim:incarnation()},
           membership             :: swim_membership:membership(),
-          broadcasts             :: swim_broadcasts:broadcasts(),
+          broadcasts             :: swim_broadcasts:broadcast(),
           awareness              :: swim_awareness:awareness(),
 
           %% Network / failure detection state
           local_member           :: swim:member(),
-          socket                 :: undefined | inet:socket(),
+          socket                 :: undefined | swim_socket:udp_socket(),
           keyring                :: swim_keyring:keyring(),
           probe                  :: undefined | probe(),
           ping_reqs        = #{} :: #{{swim:member(), sequence()} := ping_req()},

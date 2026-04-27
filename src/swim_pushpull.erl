@@ -14,7 +14,7 @@
 
 -record(state, {
           name         :: atom(),
-          socket       :: inet:socket() | ssl:socket(),
+          socket       :: swim_socket:stream_socket(),
           acceptors    :: ets:tab(),
           local_member :: swim:member(),
           opts         :: map()

@@ -67,8 +67,8 @@
 -record(suspect, {
           incarnation                :: swim:incarnation(),
           suspecting = ordsets:new() :: ordsets:ordset(swim:member()),
-          tref                       :: reference(),
-          started_at                 :: integer(),
+          tref                       :: undefined | reference(),
+          started_at                 :: undefined | integer(),
           last_modified              :: integer(),
           min                        :: float(),
           max                        :: float(),
@@ -185,11 +185,12 @@ proxies(Num, Target, Membership) ->
     Targets = [M || {_, M} <- lists:keysort(1, [{rand:uniform(), N} || N <- Members]), M =/= Target],
     lists:sublist(Targets, Num).
 
--spec handle_event(Event, Membership0) -> {Events, Membership} when
-      Event       :: swim:membership_event(),
-      Membership0 :: membership(),
-      Events      :: [swim:membership_event()],
-      Membership  :: membership().
+-spec handle_event(Event, Membership0) -> {Events, TimerActions, Membership} when
+      Event        :: swim:swim_event(),
+      Membership0  :: membership(),
+      Events       :: [swim:swim_event()],
+      TimerActions :: [timer_action()],
+      Membership   :: membership().
 
 handle_event({membership, {alive, Incarnation, Member}}, Membership) ->
     alive(Member, Incarnation, Membership);
@@ -210,12 +211,13 @@ handle_event(_Event, Membership) ->
 %% incarnation to 1 + the received incarnation and then broad a new alive message to the group.
 %% If none of the above conditions are meet we do nothing.
 %% @end
--spec alive(Member, Incarnation, Membership0) -> {Events, Membership} when
-      Member      :: swim:member(),
-      Incarnation :: swim:incarnation(),
-      Membership0 :: membership(),
-      Events      :: [swim:membership_event()],
-      Membership  :: membership().
+-spec alive(Member, Incarnation, Membership0) -> {Events, TimerActions, Membership} when
+      Member       :: swim:member(),
+      Incarnation  :: swim:incarnation(),
+      Membership0  :: membership(),
+      Events       :: [swim:swim_event()],
+      TimerActions :: [timer_action()],
+      Membership   :: membership().
 
 alive(Member, Incarnation, Membership)
   when Member =:= Membership#membership.local_member andalso
@@ -270,13 +272,14 @@ alive(Member, Incarnation, Membership) ->
 %% If the suspected member is the local member we refute by incrementing our own
 %% incarnation and broadcasting the change to the group.
 %% @end
--spec suspect(Member, Incarnation, From, Membership0) -> {Events, Membership} when
-      Member      :: swim:member(),
-      Incarnation :: swim:incarnation(),
-      From        :: local | swim:member(),
-      Membership0 :: membership(),
-      Events      :: [swim:membership_event()],
-      Membership  :: membership().
+-spec suspect(Member, Incarnation, From, Membership0) -> {Events, TimerActions, Membership} when
+      Member       :: swim:member(),
+      Incarnation  :: swim:incarnation(),
+      From         :: local | swim:member(),
+      Membership0  :: membership(),
+      Events       :: [swim:swim_event()],
+      TimerActions :: [timer_action()],
+      Membership   :: membership().
 
 suspect(Member, Incarnation, _From, Membership)
   when Member =:= Membership#membership.local_member ->
@@ -359,13 +362,14 @@ initial_suspicion_timeout(Membership) ->
 %% we remove the member and broadcast the change if the provided incarnation is
 %% greater than the current incarnation of the member.
 %% @end
--spec faulty(Member, Incarnation, From, Membership0) -> {Events, Membership} when
-      Member      :: swim:member(),
-      Incarnation :: swim:incarnation(),
-      From        :: local | swim:member(),
-      Membership0 :: membership(),
-      Events      :: [swim:membership_event()],
-      Membership  :: membership().
+-spec faulty(Member, Incarnation, From, Membership0) -> {Events, TimerActions, Membership} when
+      Member       :: swim:member(),
+      Incarnation  :: swim:incarnation(),
+      From         :: local | swim:member(),
+      Membership0  :: membership(),
+      Events       :: [swim:swim_event()],
+      TimerActions :: [timer_action()],
+      Membership   :: membership().
 
 faulty(Member, Incarnation, _From, Membership)
   when Member =:= Membership#membership.local_member ->

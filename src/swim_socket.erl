@@ -31,6 +31,11 @@
 -export([send/2]).
 -export([peername/1]).
 
+-type udp_socket()    :: gen_udp:socket().
+-type stream_socket() :: {tcp, gen_tcp:socket()} | {ssl, ssl:sslsocket()}.
+
+-export_type([udp_socket/0, stream_socket/0]).
+
 open(Port, Opts) ->
     gen_udp:open(Port, Opts).
 
@@ -94,8 +99,10 @@ accept({ssl, ListenSocket}, Pid, Timeout) ->
         {ok, Socket} ->
             gen_server:cast(Pid, accepted),
             case ssl:handshake(Socket, Timeout) of
-                ok ->
-                    {ok, {ssl, Socket}};
+                {ok, SslSocket} ->
+                    {ok, {ssl, SslSocket}};
+                {ok, SslSocket, _Ext} ->
+                    {ok, {ssl, SslSocket}};
                 {error, closed} ->
                     {error, econnaborted};
                 {error, Reason} ->
