@@ -119,7 +119,11 @@ remove_acceptor(State, Pid) ->
     ok.
 
 accept(Name, Server, LocalMember, ListenSocket, Opts) ->
-    case catch swim_socket:accept(ListenSocket, Server, maps:get(accept_timeout, Opts, 10000)) of
+    Result =
+        try swim_socket:accept(ListenSocket, Server, maps:get(accept_timeout, Opts, 10000))
+        catch Class:CatchReason -> {'EXIT', {Class, CatchReason}}
+        end,
+    case Result of
         {ok, Socket} ->
             read_message(Name, LocalMember, Socket, Opts),
             swim_socket:close(Socket),
